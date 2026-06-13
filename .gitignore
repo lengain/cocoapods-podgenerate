@@ -1,1 +1,7 @@
 *.gem
+.DS_Store
+
+# Example test projects - generated artifacts
+example/*/Pods/
+example/*/*.xcworkspace/xcuserdata/
+example/*/*.xcodeproj/xcuserdata/

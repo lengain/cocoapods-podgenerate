@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.XIB" version="3.0">
+  <dependencies>
+    <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22222"/>
+  </dependencies>
+  <objects>
+    <viewController id="1" customClass="PodBase09ViewController">
+      <view key="view" contentMode="scaleToFill" id="2">
+        <rect key="frame" x="0.0" y="0.0" width="375" height="812"/>
+        <subviews>
+          <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="PodBase09" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" id="3">
+            <rect key="frame" x="16" y="100" width="343" height="21"/>
+            <fontDescription key="fontDescription" type="system" pointSize="17"/>
+            <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom"/>
+          </label>
+        </subviews>
+        <color key="backgroundColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom"/>
+      </view>
+    </viewController>
+  </objects>
+</document>
