@@ -94,18 +94,26 @@ module Pod
             pool_size = compute_pool_size
             Pod::UI.message "- Cleaning up #{projects.size} projects (pool: #{pool_size})"
 
-            pool = Concurrent::FixedThreadPool.new(pool_size)
-            projects.each do |project|
-              pool.post do
-                cleanup_single_project(project)
-              rescue StandardError => e
-                Pod::UI.warn "[cocoapods-podgenerate] Cleanup error: #{e.message}"
-              end
+            pool = begin
+              Concurrent::FixedThreadPool.new(pool_size)
+            rescue NameError
+              nil
             end
-            pool.shutdown
-            pool.wait_for_termination
-          rescue NameError
-            cleanup_projects(projects)
+
+            if pool
+              projects.each do |project|
+                pool.post do
+                  cleanup_single_project(project)
+                rescue StandardError => e
+                  Pod::UI.warn "[cocoapods-podgenerate] Cleanup error: #{e.message}"
+                end
+              end
+              pool.shutdown
+              pool.wait_for_termination
+            else
+              # Fallback: sequential (Concurrent not available)
+              projects.each { |p| cleanup_single_project(p) }
+            end
           end
 
           def cleanup_single_project(project)
@@ -126,35 +134,38 @@ module Pod
             pool_size = compute_pool_size
             Pod::UI.message "- Recreating user schemes for #{projects.size} projects (pool: #{pool_size})"
 
-            pool = Concurrent::FixedThreadPool.new(pool_size)
-            projects.each do |project|
-              pool.post do
-                project.recreate_user_schemes(false) do |scheme, target|
-                  next unless target.respond_to?(:symbol_type)
-                  next unless library_product_types.include?(target.symbol_type)
-                  installation_result = results_by_native_target[target]
-                  next unless installation_result
-                  installation_result.test_native_targets.each do |test_native_target|
-                    scheme.add_test_target(test_native_target)
-                  end
+            pool = begin
+              Concurrent::FixedThreadPool.new(pool_size)
+            rescue NameError
+              nil
+            end
+
+            if pool
+              projects.each do |project|
+                pool.post do
+                  recreate_schemes_for_project(project, library_product_types, results_by_native_target)
+                rescue StandardError => e
+                  Pod::UI.warn "[cocoapods-podgenerate] Scheme recreation error: #{e.message}"
                 end
-              rescue StandardError => e
-                Pod::UI.warn "[cocoapods-podgenerate] Scheme recreation error: #{e.message}"
+              end
+              pool.shutdown
+              pool.wait_for_termination
+            else
+              # Fallback: sequential (Concurrent not available)
+              projects.each do |project|
+                recreate_schemes_for_project(project, library_product_types, results_by_native_target)
               end
             end
-            pool.shutdown
-            pool.wait_for_termination
-          rescue NameError
-            # Fallback: sequential
-            projects.each do |project|
-              project.recreate_user_schemes(false) do |scheme, target|
-                next unless target.respond_to?(:symbol_type)
-                next unless library_product_types.include?(target.symbol_type)
-                installation_result = results_by_native_target[target]
-                next unless installation_result
-                installation_result.test_native_targets.each do |test_native_target|
-                  scheme.add_test_target(test_native_target)
-                end
+          end
+
+          def recreate_schemes_for_project(project, library_product_types, results_by_native_target)
+            project.recreate_user_schemes(false) do |scheme, target|
+              next unless target.respond_to?(:symbol_type)
+              next unless library_product_types.include?(target.symbol_type)
+              installation_result = results_by_native_target[target]
+              next unless installation_result
+              installation_result.test_native_targets.each do |test_native_target|
+                scheme.add_test_target(test_native_target)
               end
             end
           end

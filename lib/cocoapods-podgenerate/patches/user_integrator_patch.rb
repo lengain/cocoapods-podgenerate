@@ -118,6 +118,10 @@ module Pod
 
           private
 
+          # Per-target xcconfig override check. Runs inside a thread pool slot.
+          # NOTE: `print_override_warning` is a private method on the original
+          # UserProjectIntegrator class. Ruby allows implicit-receiver calls to
+          # private methods from prepended modules (no explicit `self.` prefix).
           def warn_single_target(aggregate_target)
             aggregate_target.user_targets.each do |user_target|
               user_target.build_configurations.each do |config|

@@ -37,23 +37,14 @@ module Pod
 
               target_by_label.each do |label, target|
                 pool.post do
-                  key = case target
-                        when PodTarget
-                          local = sandbox.local?(target.pod_name)
-                          checkout_options = sandbox.checkout_sources[target.pod_name]
-                          TargetCacheKey.from_pod_target(sandbox, target_by_label, target,
-                                                         :is_local_pod => local,
-                                                         :checkout_options => checkout_options)
-                        when AggregateTarget
-                          TargetCacheKey.from_aggregate_target(sandbox, target_by_label, target)
-                        else
-                          raise "[BUG] Unknown target type #{target}"
-                        end
+                  key = compute_cache_key(target, target_by_label)
                   mutex.synchronize { results[label] = key }
                 rescue StandardError => e
-                  mutex.synchronize do
-                    Pod::UI.warn "[cocoapods-podgenerate] Cache key computation error: #{e.message}"
-                  end
+                  # Bug fix v0.1.3: compute fallback key synchronously to avoid nil
+                  # entries that would crash ProjectCacheAnalyzer#analyze downstream
+                  Pod::UI.warn "[cocoapods-podgenerate] Cache key computation error, retrying sync: #{e.message}"
+                  fallback_key = compute_cache_key(target, target_by_label)
+                  mutex.synchronize { results[label] = fallback_key }
                 end
               end
 
@@ -64,6 +55,21 @@ module Pod
           end
 
           private
+
+          def compute_cache_key(target, target_by_label)
+            case target
+            when PodTarget
+              local = sandbox.local?(target.pod_name)
+              checkout_options = sandbox.checkout_sources[target.pod_name]
+              TargetCacheKey.from_pod_target(sandbox, target_by_label, target,
+                                             :is_local_pod => local,
+                                             :checkout_options => checkout_options)
+            when AggregateTarget
+              TargetCacheKey.from_aggregate_target(sandbox, target_by_label, target)
+            else
+              raise "[BUG] Unknown target type #{target}"
+            end
+          end
 
           def compute_pool_size
             [[Etc.nprocessors - 1, 2].max, 16].min
