@@ -1,21 +1,24 @@
 # frozen_string_literal: true
 
 # [cocoapods-podgenerate]
-# Monkey-patches PodsProjectWriter to support incremental project saves.
-# Uses project.pbxproj file for change detection via SHA256 digest.
+# Monkey-patches PodsProjectWriter to support incremental + parallel project saves.
 #
-# Reference: CocoaPods source — lib/cocoapods/installer/xcode/pods_project_generator/pods_project_writer.rb
+# v0.1.1 Optimizations:
+#  1. SHA256 digest — skip sort+save for unchanged projects
+#  2. Parallel save — multiple xcodeproj files saved in threads
+#
+# Reference: CocoaPods — lib/cocoapods/installer/xcode/pods_project_generator/pods_project_writer.rb
 
 module Pod
   module PodGenerate
     module Patches
       module ProjectWriterPatch
         def self.apply
-          Pod::UI.message '[cocoapods-podgenerate] Applying ProjectWriterPatch (incremental save)'
-          Pod::Installer::Xcode::PodsProjectWriter.prepend(IncrementalSave)
+          Pod::UI.message '[cocoapods-podgenerate] Applying ProjectWriterPatch v2 (incremental + parallel save)'
+          Pod::Installer::Xcode::PodsProjectWriter.prepend(IncrementalAndParallelSave)
         end
 
-        module IncrementalSave
+        module IncrementalAndParallelSave
           def initialize(sandbox, projects, pod_target_installation_results, installation_options)
             super
             @project_digests = {}
@@ -24,18 +27,42 @@ module Pod
             compute_initial_digests
           end
 
+          # ── Optimization: SHA256 skip + parallel save ──
           def save_projects(projects)
-            projects.each do |project|
+            # Filter: skip projects whose pbxproj is unchanged
+            to_save = projects.select do |project|
               if project_unchanged?(project)
                 Pod::UI.message "- Skipping unchanged project #{UI.path project.path}"
-                next
+                false
+              else
+                true
               end
+            end
+            return if to_save.empty?
 
-              project.sort(:groups_position => :below) if needs_sort?(project)
-              Pod::UI.message "- Writing Xcode project file to #{UI.path project.path}" do
-                project.save
+            # Sort each project
+            to_save.each { |p| p.sort(:groups_position => :below) if needs_sort?(p) }
+
+            # Parallel save (safe: each xcodeproj is an independent directory)
+            if to_save.size > 1
+              Pod::UI.message "- Saving #{to_save.size} projects in parallel"
+              threads = to_save.map do |project|
+                Thread.new do
+                  begin
+                    Pod::UI.message "- Writing Xcode project file to #{UI.path project.path}"
+                    project.save
+                    update_digest(project)
+                  rescue StandardError => e
+                    Pod::UI.warn "[cocoapods-podgenerate] Parallel save error: #{e.message}"
+                  end
+                end
               end
-              update_digest(project)
+              threads.each(&:join)
+            else
+              Pod::UI.message "- Writing Xcode project file to #{UI.path to_save.first.path}" do
+                to_save.first.save
+                update_digest(to_save.first)
+              end
             end
           end
 
@@ -74,7 +101,6 @@ module Pod
           def pbxproj_path(project)
             path = project.path
             return nil unless path
-            # .xcodeproj is a directory; the actual content is in project.pbxproj
             if path.to_s.end_with?('.xcodeproj')
               File.join(path.to_s, 'project.pbxproj')
             else
