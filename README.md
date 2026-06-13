@@ -11,7 +11,7 @@
 > 测试环境：150 pods · 26源文件+3资源/pod · ObjC+Swift混编 · 6 targets
 >
 > v0.1.0–v0.1.2: Apple M3 Pro  
-> v0.1.6: Apple M3 (对比脚本见 `example/compare.sh`，包含 A/B/C 三方对照)
+> v0.1.6: Apple M3（对比脚本见 `example/compare.sh`，包含 A/B/C 三方对照）
 
 | 版本         | 场景       | 耗时        | 相比上个版本提升     | 相比无插件提升  |
 |:----------:| -------- |:---------:|:------------:|:--------:|
@@ -38,28 +38,30 @@
 
 ## 功能
 
-### v0.1.2 新增优化
+### 补丁总览
 
-| 补丁                                 | 优化目标                                         | `pod install` 步骤 |
-| ---------------------------------- | -------------------------------------------- |:----------------:|
-| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller（150 pod 同时安装）         | 第3步              |
-| `cache_analyzer_patch.rb`          | 并行化 cache key MD5 计算                         | 第3步              |
-| `installer_patch.rb` (增强)          | 并行化 configure_schemes                        | 第3步              |
-| `project_writer_patch.rb` (增强)     | 并行化 cleanup_projects + recreate_user_schemes | 第3步              |
-| `user_integrator_patch.rb` (增强)    | 并行化 xcconfig override 警告                     | 第4步              |
-| `profiler.rb` (增强)                 | 子步骤计时分析                                      | 调试               |
+| 补丁                                 | 优化目标                                                   | 步骤  | 引入版本 |
+| ---------------------------------- | ------------------------------------------------------ |:---:|:------:|
+| `installer_patch.rb`               | 强制增量模式 + 跳过无变更生成 + 并行 integrate + 并行 configure_schemes | 3/4 | v0.1.1 |
+| `project_patch.rb`                 | pod_group O(n) → O(1) 哈希缓存                             | 3   | v0.1.1 |
+| `project_writer_patch.rb`          | SHA256 摘要比对 + 并行 cleanup/schemes/save                  | 3   | v0.1.1 |
+| `analyzer_patch.rb`                | 依赖解析结果缓存                                               | 1   | v0.1.1 |
+| `user_integrator_patch.rb`         | 多 target 并行集成 + 并行保存 + 并行 xcconfig 警告                  | 4   | v0.1.1 |
+| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller（150 pod 同时安装）                  | 3   | v0.1.2 |
+| `cache_analyzer_patch.rb`          | 并行 cache key MD5 计算                                     | 3   | v0.1.2 |
+| `profiler.rb`                      | 子步骤计时分析（调试）                                          | 调试  | v0.1.2 |
 
-### v0.1.x 完整优化列表
+### 版本历史
 
-| 补丁                                 | 优化目标                                                   | 步骤  |
-| ---------------------------------- | ------------------------------------------------------ |:---:|
-| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller                                 | 3   |
-| `project_patch.rb`                 | pod_group O(n) → O(1) 哈希缓存                             | 3   |
-| `project_writer_patch.rb`          | SHA256 摘要比对 + 并行 cleanup/schemes/save                  | 3   |
-| `installer_patch.rb`               | 强制增量模式 + 跳过无变更生成 + 并行 integrate + 并行 configure_schemes | 3   |
-| `cache_analyzer_patch.rb`          | 并行 cache key MD5 计算                                    | 3   |
-| `analyzer_patch.rb`                | 依赖解析结果缓存                                               | 1   |
-| `user_integrator_patch.rb`         | 多 target 并行集成 + 并行保存 + 并行 xcconfig 警告                  | 4   |
+| 版本 | 变更 |
+|:---:|:----|
+| v0.1.0 | 初始版本 |
+| v0.1.1 | 增量安装从 4.22s → 1.52s（+64%）；跳过无变更项目生成；并行集成 |
+| v0.1.2 | 并行化 PodTargetInstaller + cache key + schemes；子步骤计时分析 |
+| v0.1.3 | Bug fixes from audit |
+| v0.1.4 | Comprehensive bug fix（包含 CocoaPods 1.16.2 `ResolverSpecification` 兼容修复） |
+| v0.1.5 | （内部版本） |
+| **v0.1.6** | **正式发布 CocoaPods 1.16.2 兼容修复**；增加 A/B/C 三方对比测试框架 |
 
 ---
 
@@ -70,6 +72,8 @@
 ```bash
 gem install cocoapods-podgenerate
 ```
+
+要求 Ruby >= 3.0、CocoaPods >= 1.10.0。
 
 ### 在 Podfile 中启用
 
@@ -88,10 +92,10 @@ pod install
 ### 调试模式
 
 ```bash
-POD_GENERATE_DEBUG=1 pod install
+COCOAPODS_PODGENERATE_DEBUG=1 pod install
 ```
 
-输出示例（v0.1.2 新增子步骤计时）：
+输出示例：
 
 ```
 [cocoapods-podgenerate] Performance Report:
@@ -113,24 +117,34 @@ PodGenerate/
 ├── cocoapods-podgenerate.gemspec       # Gem 规范
 ├── Gemfile
 ├── lib/
+│   ├── cocoapods_plugin.rb             # CLAide 插件发现入口
 │   └── cocoapods-podgenerate/
-│       ├── rb                  # 入口，激活所有补丁
-│       ├── command.rb                   # pod podgenerate CLI 命令
-│       ├── hooks.rb                     # :pre_install hook
+│       ├── cocoapods-podgenerate.rb    # 入口，激活所有补丁
+│       ├── command.rb                  # pod podgenerate CLI 命令
+│       ├── hooks.rb                    # :pre_install hook
 │       ├── patches/
-│       │   ├── installer_patch.rb       # 强制增量 + 跳过 + 并行集成 + 并行 schemes
+│       │   ├── installer_patch.rb      # 强制增量 + 跳过 + 并行集成 + 并行 schemes
 │       │   ├── multi_project_generator_patch.rb  # 并行 PodTargetInstaller (v0.1.2)
-│       │   ├── project_patch.rb         # pod_group 哈希缓存
-│       │   ├── project_writer_patch.rb  # 增量写入 + 并行 cleanup/schemes/save
-│       │   ├── analyzer_patch.rb        # 依赖解析缓存
-│       │   ├── cache_analyzer_patch.rb  # 并行 cache key 计算 (v0.1.2)
-│       │   └── user_integrator_patch.rb # 多 target 并行集成 + 并行 xcconfig 警告
+│       │   ├── project_patch.rb        # pod_group 哈希缓存
+│       │   ├── project_writer_patch.rb # 增量写入 + 并行 cleanup/schemes/save
+│       │   ├── analyzer_patch.rb       # 依赖解析缓存
+│       │   ├── cache_analyzer_patch.rb # 并行 cache key 计算 (v0.1.2)
+│       │   └── user_integrator_patch.rb# 多 target 并行集成 + 并行 xcconfig 警告
 │       ├── parallel/
-│       │   ├── thread_pool.rb           # 线程池封装
-│       │   └── batch_processor.rb       # 批处理工具
+│       │   ├── thread_pool.rb          # 线程池封装
+│       │   └── batch_processor.rb      # 批处理工具
 │       └── benchmark/
-│           └── profiler.rb              # 性能分析器（含子步骤计时）
-└── spec/                                # 测试（待补充）
+│           └── profiler.rb             # 性能分析器（含子步骤计时）
+└── example/                            # 性能测试框架
+    ├── compare.sh                      # A/B/C 三方对比（首轮 + 增量）
+    ├── enhance_pods.rb                 # 增强 pod 模板
+    ├── generate_podfile.rb             # 生成 150 个测试 pod
+    ├── multi_target_test.rb            # 多 target 场景测试
+    ├── run_with_plugin.rb              # 手动加载插件运行（调试用）
+    ├── Gemfile                         # ExampleA/C 的 Gemfile
+    ├── ExampleA/                       # 本地路径插件工程
+    ├── ExampleB/                       # 纯原生 CocoaPods 基准工程
+    └── ExampleC/                       # 生产 gem 插件工程
 ```
 
 ---
@@ -139,11 +153,11 @@ PodGenerate/
 
 项目包含完整的性能测试框架，支持三种方案的横向对比：
 
-| 方案 | 说明 |
-|:---:|:----:|
-| ExampleA | 本地路径插件 + Podfile `plugin` 声明 |
-| ExampleB | 纯原生 CocoaPods（无插件）基准 |
-| ExampleC | 生产 gem 插件 + Podfile `plugin` 声明 |
+| 方案 | 说明 | 运行方式 |
+|:---:|:----|:--------:|
+| ExampleA | 本地路径插件 + Podfile `plugin` 声明 | `bundle exec pod install` |
+| ExampleB | 纯原生 CocoaPods（无插件）基准 | `pod install` |
+| ExampleC | 生产 gem 插件 + Podfile `plugin` 声明 | `bundle exec pod install` |
 
 ```bash
 cd example
@@ -157,17 +171,22 @@ ruby generate_podfile.rb
 # A/B/C 三方对比测试（首次干净安装 + 增量安装 + 性能表格）
 bash compare.sh
 
+# 手动调试：在指定 Example 目录运行
+cd ExampleC && bundle exec pod install --verbose
+
 # 多 target 场景测试（6 个 target）
-ruby multi_target_test.rb
+ruby ../multi_target_test.rb
 ```
+
+> **注意**：`compare.sh` 会自动管理系统 gem 的安装/卸载，确保 ExampleB 不被插件影响。运行过程中会临时卸载 cocoapods-podgenerate gem，运行完 B 后重新安装。
 
 ---
 
 ## 兼容性
 
-- **CocoaPods**: >= 1.10.0
+- **CocoaPods**: >= 1.10.0（v0.1.6+ 已验证 CocoaPods 1.16.2）
 - **Ruby**: >= 3.0
-- **Platform**: macOS (Xcode 项目集成)
+- **Platform**: macOS（Xcode 项目集成）
 - 不影响 Xcode 编译产物，仅优化 `pod install` 过程
 
 ## License
