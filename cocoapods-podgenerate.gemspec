@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name          = 'cocoapods-podgenerate'
-  spec.version = '0.1.4'
+  spec.version = '0.1.6'
   spec.summary       = 'Speeds up CocoaPods install for large projects (200+ pods)'
   spec.description   = 'A CocoaPods plugin that accelerates pod install for large-scale projects with 200+ pods by introducing parallel processing, optimized dependency analysis, incremental project generation, and multi-project parallel saving.'
   spec.authors       = ['PodGenerate Team']
