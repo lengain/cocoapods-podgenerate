@@ -9,15 +9,17 @@ module Pod
     module Benchmark
       module Profiler
         @phase_timings = []
+        @timings_mutex = Mutex.new
 
         class << self
           def enabled?
-            @enabled ||= ENV['POD_GENERATE_DEBUG'] == '1' ||
-                         ENV['COCOAPODS_PODGENERATE_DEBUG'] == '1'
+            ENV['POD_GENERATE_DEBUG'] == '1' ||
+              ENV['COCOAPODS_PODGENERATE_DEBUG'] == '1' ||
+              @enabled_override
           end
 
           def enable!
-            @enabled = true
+            @enabled_override = true
           end
 
           def install
@@ -27,7 +29,7 @@ module Pod
           end
 
           def record_phase(name, duration)
-            @phase_timings << [name, duration]
+            @timings_mutex.synchronize { @phase_timings << [name, duration] }
           end
 
           def report

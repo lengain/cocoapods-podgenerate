@@ -1,34 +1,25 @@
 # frozen_string_literal: true
 
 # [cocoapods-podgenerate]
-# Thread pool wrapper using plain Ruby Thread.
-# Provides CPU-core-aware pool sizing with work queue and error handling.
+# 线程池工具模块 — 提供跨所有补丁共享的线程池大小计算和超时配置。
+
+require 'etc'
 
 module Pod
   module PodGenerate
     module Parallel
       module ThreadPool
+        # 默认的线程池等待超时（秒）
+        DEFAULT_TIMEOUT = 120
+
         class << self
-          def default_size
-            @default_size ||= [Etc.nprocessors - 1, 2].max
+          # 计算适合当前机器的线程池大小
+          # 使用 nproc - 1（为主线程留一个核心），最小 2，最大 16
+          # @return [Integer] 推荐的线程池大小
+          def pool_size
+            [[Etc.nprocessors - 1, 2].max, 16].min
           rescue NameError
-            @default_size ||= 4
-          end
-
-          # Create and yield a thread pool, then shut it down.
-          def with_pool(size: nil, &block)
-            pool = create(size: size)
-            yield pool
-          ensure
-            pool&.each(&:kill)
-          end
-
-          def create(size: nil)
-            pool_size = size || default_size
-            # Return an array of available threads - caller manages them
-            Array.new(pool_size) { Thread.new { sleep } }.each(&:exit)
-            # We use a simpler approach - caller creates threads directly
-            nil
+            4
           end
         end
       end

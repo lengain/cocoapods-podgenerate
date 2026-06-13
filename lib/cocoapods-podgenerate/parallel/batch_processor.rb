@@ -1,48 +1,49 @@
 # frozen_string_literal: true
 
 # [cocoapods-podgenerate]
-# Batch processor that splits work items across a thread pool.
-# Maintains ordering: results are returned in the same order as input items.
+# 批处理器 — 将工作项在线程池中并行分配处理。
+#
+# 用于将需要并行化的批量任务分配到 Concurrent::FixedThreadPool，
+# 保持结果的输入顺序（通过索引数组）。
+#
+# v0.1.4 改进：
+#   - wait_for_termination 添加超时（120s）防止死锁
+#   - 移除未使用的 batch_size 和 completed 变量
 
 require 'concurrent'
+require_relative 'thread_pool'
 
 module Pod
   module PodGenerate
     module Parallel
       module BatchProcessor
-        # Process items in batches using a thread pool.
-        # @param items [Array] list of items to process
-        # @param batch_size [Integer] max items per batch (nil = auto-size)
-        # @param pool [Concurrent::FixedThreadPool] the thread pool
-        # @yield [item] block to process each item
-        # @return [Array] results in same order as input items
-        def self.process(items, pool:, batch_size: nil, &block)
+        # 在线程池中并行处理项目，保持结果的输入顺序
+        #
+        # @param items [Array] 要处理的项目列表
+        # @param pool [Concurrent::FixedThreadPool] 线程池实例
+        # @yield [item] 处理每个项目的代码块
+        # @return [Array] 结果列表，顺序与输入相同（nil 表示处理失败的项目）
+        def self.process(items, pool:, &block)
           return [] if items.empty?
 
           results = Array.new(items.size)
           mutex = Mutex.new
-          count = items.size
-          completed = 0
 
           items.each_with_index do |item, idx|
             pool.post do
-              begin
-                result = block.call(item)
-                mutex.synchronize { results[idx] = result }
-              rescue StandardError => e
-                mutex.synchronize do
-                  Pod::UI.warn "[cocoapods-podgenerate] BatchProcessor error on item #{idx}: #{e.message}"
-                end
-              ensure
-                mutex.synchronize do
-                  completed += 1
-                end
-              end
+              result = block.call(item)
+              mutex.synchronize { results[idx] = result }
+            rescue StandardError => e
+              Pod::UI.warn "[cocoapods-podgenerate] BatchProcessor error on item #{idx}: #{e.message}"
             end
           end
 
-          # Wait for all tasks to complete
-          pool.wait_for_termination
+          # v0.1.4: 带超时的等待
+          pool.shutdown
+          unless pool.wait_for_termination(Pod::PodGenerate::Parallel::ThreadPool::DEFAULT_TIMEOUT)
+            Pod::UI.warn '[cocoapods-podgenerate] BatchProcessor timed out after 120s'
+            pool.kill
+          end
 
           results
         end

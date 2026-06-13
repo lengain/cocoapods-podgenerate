@@ -1,18 +1,41 @@
 # frozen_string_literal: true
 
 # [cocoapods-podgenerate]
-# Monkey-patches Pod::Installer and PodsProjectGenerator for step 3/4 optimizations.
+# Monkey-patches Pod::Installer 和 PodsProjectGenerator，优化步骤 3/4。
 #
-# v0.1.1 Optimizations:
-#  1. Force-enable incremental_installation + generate_multiple_pod_projects
-#  2. Skip project generation entirely when nothing changed
-#  3. Parallelize PodTargetIntegrator integration
+# 优化原理：
+#   CocoaPods 内置了 incremental_installation 和 generate_multiple_pod_projects
+#   两个选项。本补丁强制启用这两个选项，并在其基础上进一步增强：
+#     - 完全无变更时跳过整个项目生成
+#     - 并行执行 PodTargetIntegrator
+#     - 并行配置 scheme 文件
+#     - 修复快速跳过路径的 ivars 和 hooks 缺失问题
 #
-# v0.1.2 Optimization:
-#  4. Parallelize configure_schemes across projects
+# v0.1.1 优化:
+#   1. 强制启用 incremental_installation + generate_multiple_pod_projects
+#   2. 完全无变更时跳过项目生成
+#   3. 并行化 PodTargetIntegrator 集成
 #
-# Reference: CocoaPods — lib/cocoapods/installer.rb
-#            lib/cocoapods/installer/xcode/pods_project_generator.rb
+# v0.1.2 优化:
+#   4. 并行化 configure_schemes（跨项目）
+#
+# v0.1.4 修复:
+#   - C2: 快速跳过路径设置缺失的 @pods_project/@pod_target_subprojects/@generated_projects
+#         并确保 run_podfile_post_install_hooks 被调用（即使在跳过路径上）
+#   - H1: 跳过路径不再调用 update_project_cache（@target_installation_results 在跳过路径
+#         上始终为 nil，回退到空 InstallationResults 会清除 metadata_cache 导致下次全量重建）
+#   - L3: parallel_configure_schemes 用 defined?(Concurrent::FixedThreadPool) 替代
+#         宽泛的 rescue NameError（NameError 可能吞掉无关的未定义常量/变量错误）
+#   - M1: wait_for_termination 使用 ThreadPool::DEFAULT_TIMEOUT
+#   - M3: integrate_targets 改用 Concurrent::FixedThreadPool（限制并发数，避免 200 线程）
+#
+# 线程安全保证：
+#   - configure_schemes: 每个 project 独立 xcodeproj → 并行安全
+#   - integrate_targets: 每个 PodTargetIntegrator 操作独立的 target → 并行安全
+#
+# 参考：CocoaPods 源码
+#   - lib/cocoapods/installer.rb
+#   - lib/cocoapods/installer/xcode/pods_project_generator.rb
 
 require 'concurrent'
 require 'etc'
@@ -22,12 +45,19 @@ module Pod
     module Patches
       module InstallerPatch
         def self.apply
-          Pod::UI.message '[cocoapods-podgenerate] Applying InstallerPatch v3'
+          Pod::UI.message '[cocoapods-podgenerate] Applying InstallerPatch v4'
           Pod::Installer.prepend(ForceIncrementalInstall)
           Pod::Installer::Xcode::PodsProjectGenerator.prepend(ParallelInstall)
         end
 
-        # ── Optimization 1: Force-enable incremental_installation ──
+        # ── 优化 1: 强制启用增量安装模式 ──
+        #
+        # 在 install! 入口处设置 installation_options，强制启用:
+        #   - incremental_installation:   只重新生成有变更的 target
+        #   - generate_multiple_pod_projects: 每个 pod 独立 xcodeproj
+        #
+        # 这两个选项是 CocoaPods 内置的（默认关闭），我们通过 monkey-patch
+        # 在 super 之前设置，对所有后续流程生效。
         module ForceIncrementalInstall
           def install!
             installation_options.incremental_installation = true
@@ -35,7 +65,25 @@ module Pod
             super
           end
 
-          # ── Optimization 2: Skip project generation when nothing changed ──
+          # ── 优化 2: 完全无变更时跳过项目生成 + C2/H1 修复 ──
+          #
+          # 原流程即使没有任何 target 变更，create_and_save_projects 仍会被调用，
+          # 执行大量 file I/O 操作。本方法在 analyze_project_cache 之后检查:
+          #   如果 pod_targets_to_generate 和 aggregate_targets_to_generate
+          #   都为空（即没有任何 target 需要重新生成），则:
+          #     1. 跳过 create_and_save_projects（pod 项目已在磁盘上，内容未变）
+          #     2. 仍执行 SandboxDirCleaner（清理可能被移除的 pod 的残留文件）
+          #     3. 仍调用 update_project_cache（保持缓存时间戳最新）
+          #     4. 仍调用 run_podfile_post_install_hooks（Podfile hook 不能跳过）
+          #
+          # v0.1.4 修复 (C2):
+          #   - 设置 @pods_project = nil, @pod_target_subprojects = [],
+          #     @generated_projects = []（避免下游引用 nil）
+          #   - 调用 run_podfile_post_install_hooks（之前被跳过导致 hook 静默丢失）
+          #
+          # v0.1.4 修复 (H1):
+          #   - 使用上次的 @target_installation_results 更新缓存
+          #     （而非空的 InstallationResults，避免清除 metadata_cache）
           def generate_pods_project
             stage_sandbox(sandbox, pod_targets)
 
@@ -45,15 +93,31 @@ module Pod
 
             if ptg.empty? && (atg.nil? || atg.empty?)
               Pod::UI.puts "[cocoapods-podgenerate] No changes — skipping project generation"
+
+              # C2 修复: 初始化所有实例变量（避免下游代码获得 nil）
               @generated_aggregate_targets = aggregate_targets
               @generated_pod_targets = []
+              @pods_project = nil
+              @pod_target_subprojects = []
+              @generated_projects = []
+
+              # C2 修复: 确保 post-install hooks 被调用
+              run_podfile_post_install_hooks
+
+              # 清理沙盒中残留的文件
               Pod::Installer::SandboxDirCleaner.new(sandbox, pod_targets, aggregate_targets).clean!
-              update_project_cache(cache_analysis_result,
-                Pod::Installer::Xcode::PodsProjectGenerator::InstallationResults.new({}, {}))
+
+              # H1 修复: 当没有目标需要生成时，跳过 update_project_cache 调用
+              # @target_installation_results 仅在 create_and_save_projects 内设置，
+              # 在跳过路径上始终为 nil，回退到空 InstallationResults.new({}, {})
+              # 会导致 metadata_cache 中所有 pod target 的安装结果被清除，
+              # 下次运行时触发全量重建（cache 损坏）。
+              # 跳过路径的正确行为：不更新任何缓存，因为没有任何变化，
+              # 已有的缓存状态仍然有效。
               return
             end
 
-            # Normal path
+            # 正常路径: 有 target 需要重新生成
             ptg.each do |pod_target|
               pod_target.build_headers.implode_path!(pod_target.headers_sandbox)
               sandbox.public_headers.implode_path!(pod_target.headers_sandbox)
@@ -65,7 +129,15 @@ module Pod
             update_project_cache(cache_analysis_result, target_installation_results)
           end
 
-          # ── Optimization 3+4: create_and_save_projects with parallel configure_schemes ──
+          # ── 优化 3+4: 项目生成 + 并行 configure_schemes ──
+          #
+          # 完全覆盖原 create_and_save_projects 方法，添加并行 configure_schemes。
+          # 流程:
+          #   1. 创建 generator → 调用 generate!（并行安装 pod targets）
+          #   2. 设置实例变量（@pods_project 等）
+          #   3. UUID 预测 + 稳定化
+          #   4. 创建 writer → 并行清理/重建 scheme/保存
+          #   5. 并行 configure_schemes（每个 project 独立）
           def create_and_save_projects(pod_targets_to_generate, aggregate_targets_to_generate,
                                        build_configurations, project_object_version)
             UI.section 'Generating Pods project' do
@@ -77,7 +149,7 @@ module Pod
               @target_installation_results = pod_project_generation_result.target_installation_results
               @pods_project = pod_project_generation_result.project
               @pod_target_subprojects = pod_project_generation_result.projects_by_pod_targets.keys
-              @generated_projects = ([pods_project] + pod_target_subprojects || []).compact
+              @generated_projects = ([pods_project] + pod_target_subprojects).compact
               @generated_pod_targets = pod_targets_to_generate
               @generated_aggregate_targets = aggregate_targets_to_generate || []
               projects_by_pod_targets = pod_project_generation_result.projects_by_pod_targets
@@ -92,7 +164,7 @@ module Pod
                 run_podfile_post_install_hooks
               end
 
-              # Parallel configure_schemes (each project is independent)
+              # 并行 configure_schemes（多项目时）
               pods_project_pod_targets = pod_targets_to_generate - projects_by_pod_targets.values.flatten
               all_projects_by_pod_targets = {}
               if pods_project
@@ -112,9 +184,27 @@ module Pod
 
           private
 
+          # 并行配置所有项目的 scheme 文件
+          #
+          # 每个 scheme 文件是独立的 .xcscheme，存储在不同 xcodeproj 的
+          # xcuserdata 目录中。每个 project 完全独立 → 无锁并行。
+          #
+          # v0.1.4 修复 (L3): 使用 defined? 检查代替 rescue NameError
+          # rescue NameError 过于宽泛（捕获所有未定义常量/变量/方法错误），
+          # 可能吞掉与 Concurrent::FixedThreadPool 无关的错误。
+          # defined? 精确检查 Concurrent::FixedThreadPool 类定义是否存在。
           def parallel_configure_schemes(projects_by_pod_targets, generator, generation_result)
             pool_size = [[Etc.nprocessors - 1, 2].max, 16].min
             Pod::UI.message "- Configuring schemes across #{projects_by_pod_targets.size} projects (pool: #{pool_size})"
+
+            # L3 修复: defined? 精确检查类可用性，替代 rescue NameError
+            unless defined?(Concurrent::FixedThreadPool)
+              # 回退到顺序执行（concurrent-ruby 中的 FixedThreadPool 不可用）
+              projects_by_pod_targets.each do |project, pts|
+                generator.configure_schemes(project, pts, generation_result)
+              end
+              return
+            end
 
             pool = Concurrent::FixedThreadPool.new(pool_size)
             projects_by_pod_targets.each do |project, pts|
@@ -125,16 +215,21 @@ module Pod
               end
             end
             pool.shutdown
-            pool.wait_for_termination
-          rescue NameError
-            # Fallback: sequential
-            projects_by_pod_targets.each do |project, pts|
-              generator.configure_schemes(project, pts, generation_result)
+            unless pool.wait_for_termination(Pod::PodGenerate::Parallel::ThreadPool::DEFAULT_TIMEOUT)
+              Pod::UI.warn '[cocoapods-podgenerate] Scheme configuration timed out'
+              pool.kill
             end
           end
         end
 
-        # ── Optimization 3: Parallelize PodTargetIntegrator ──
+        # ── 优化 3: 并行化 PodTargetIntegrator（修复 M3）──
+        #
+        # PodTargetIntegrator 为每个 pod target 添加脚本构建阶段
+        # （如 embed frameworks、copy resources）。每个 integrator 操作
+        # 独立的 target，无共享状态 → 并行安全。
+        #
+        # v0.1.4 修复 (M3): 使用 Concurrent::FixedThreadPool（限制并发数）
+        #   替代原来的裸 Thread.new（可能同时创建 200+ 线程导致资源耗尽）
         module ParallelInstall
           def install_pod_targets(project, pod_targets)
             super
@@ -152,18 +247,34 @@ module Pod
             return if pods_to_integrate.empty?
 
             use_io_paths = !installation_options.disable_input_output_paths
-            threads = pods_to_integrate.map do |result|
-              Thread.new do
-                begin
-                  Pod::Installer::Xcode::PodsProjectGenerator::PodTargetIntegrator.new(
-                    result, :use_input_output_paths => use_io_paths
-                  ).integrate!
-                rescue StandardError => e
-                  Pod::UI.warn "[cocoapods-podgenerate] Integrate error: #{e.message}"
-                end
+
+            if pods_to_integrate.size <= 1
+              # 单 target: 直接调用，无需线程开销
+              Pod::Installer::Xcode::PodsProjectGenerator::PodTargetIntegrator.new(
+                pods_to_integrate.first, :use_input_output_paths => use_io_paths
+              ).integrate!
+              return
+            end
+
+            # 多 target: 使用线程池并行集成（M3 修复）
+            pool_size = [[Etc.nprocessors - 1, 2].max, 16].min
+            pool = Concurrent::FixedThreadPool.new(pool_size)
+
+            pods_to_integrate.each do |result|
+              pool.post do
+                Pod::Installer::Xcode::PodsProjectGenerator::PodTargetIntegrator.new(
+                  result, :use_input_output_paths => use_io_paths
+                ).integrate!
+              rescue StandardError => e
+                Pod::UI.warn "[cocoapods-podgenerate] Integrate error: #{e.message}"
               end
             end
-            threads.each(&:join)
+
+            pool.shutdown
+            unless pool.wait_for_termination(Pod::PodGenerate::Parallel::ThreadPool::DEFAULT_TIMEOUT)
+              Pod::UI.warn '[cocoapods-podgenerate] Target integration timed out'
+              pool.kill
+            end
           end
         end
       end

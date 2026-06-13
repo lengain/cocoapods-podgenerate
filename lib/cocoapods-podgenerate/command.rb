@@ -1,5 +1,17 @@
 # frozen_string_literal: true
 
+# [cocoapods-podgenerate]
+# `pod podgenerate` CLI 命令 — 带优化运行 pod install 的快捷方式。
+#
+# 用法:
+#   pod podgenerate              # 运行优化的 pod install
+#   pod podgenerate --debug      # 启用详细性能分析输出
+#   pod podgenerate --verbose    # 传递 --verbose 给 pod install
+#
+# v0.1.4 修复 (M7):
+#   用户参数（如 --no-repo-update、--verbose）现在会正确传递给
+#   底层的 pod install 命令，不再被静默丢弃。
+
 module Pod
   class Command
     class Podgenerate < Command
@@ -20,19 +32,22 @@ module Pod
 
       def initialize(argv)
         @debug = argv.flag?('debug', false)
+        # v0.1.4: 保存原始参数，稍后传递给 pod install（修复 M7）
+        @remaining_argv = argv
         super
       end
 
       def run
-        Pod::PodGenerate.activate
-
         if @debug
+          Pod::PodGenerate::Benchmark::Profiler.enable!
           Pod::UI.puts '[cocoapods-podgenerate] Debug mode enabled — verbose profiling output will be shown.'
-          ENV['COCOAPODS_PODGENERATE_DEBUG'] = '1'
         end
 
-        # Delegate to the standard install command
-        install_command = Pod::Command::Install.new(CLAide::ARGV.new([]))
+        Pod::PodGenerate.activate
+
+        # 委托给标准的 pod install 命令执行
+        # v0.1.4: 传递用户原参数给 pod install（修复 M7）
+        install_command = Pod::Command::Install.new(CLAide::ARGV.new(@remaining_argv.remainder!))
         install_command.run
       end
     end
