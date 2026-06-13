@@ -10,10 +10,14 @@
 
 > 测试环境：150 pods · 26源文件+3资源/pod · ObjC+Swift混编 · 6 targets · Apple M3 Pro
 
-| 场景          | 无插件       | 带插件 v0.1.1 | 节省        | 提升         |
-| ----------- | --------- | ---------- | --------- |:----------:|
-| 干净安装（首次）    | 4.91s     | 5.61s      | —         | 略慢（多项目模式）  |
-| **增量安装 🔄** | **4.84s** | **1.52s**  | **3.32s** | **+68.4%** |
+| 版本         | 场景       | 耗时        | 相比上个版本提升     | 相比无插件提升  |
+|:----------:| -------- |:---------:|:------------:|:--------:|
+| v0.1.0     | 干净安装     | 4.88s     | —            | —        |
+| v0.1.0     | 增量安装     | 4.22s     | —            | —        |
+| v0.1.1     | 干净安装     | 5.61s     | —            | —        |
+| v0.1.1     | 增量安装     | 1.52s     | **+64%**     | **+68%** |
+| **v0.1.2** | **干净安装** | **5.18s** | **+7.7%** 🚀 | —        |
+| **v0.1.2** | **增量安装** | **1.14s** | **+25%** 🚀  | **+75%** |
 
 插件在**增量安装**场景下效果最显著——这是日常开发中最频繁的操作（修改代码后重新 `pod install`）。
 
@@ -21,13 +25,28 @@
 
 ## 功能
 
-| 补丁                         | 优化目标                          | `pod install` 步骤 |
-| -------------------------- | ----------------------------- |:----------------:|
-| `project_patch.rb`         | pod_group O(n) → O(1) 哈希缓存    | 第3步              |
-| `project_writer_patch.rb`  | SHA256 摘要比对，跳过未变项目的 sort+save | 第3步              |
-| `installer_patch.rb`       | 并行化 PodTargetIntegrator 集成    | 第3步              |
-| `analyzer_patch.rb`        | 依赖解析结果缓存，跳过 Molinillo         | 第1步              |
-| `user_integrator_patch.rb` | 多 target 并行集成 + 并行保存项目        | 第4步              |
+### v0.1.2 新增优化
+
+| 补丁                                 | 优化目标                                         | `pod install` 步骤 |
+| ---------------------------------- | -------------------------------------------- |:----------------:|
+| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller（150 pod 同时安装）         | 第3步              |
+| `cache_analyzer_patch.rb`          | 并行化 cache key MD5 计算                         | 第3步              |
+| `installer_patch.rb` (增强)          | 并行化 configure_schemes                        | 第3步              |
+| `project_writer_patch.rb` (增强)     | 并行化 cleanup_projects + recreate_user_schemes | 第3步              |
+| `user_integrator_patch.rb` (增强)    | 并行化 xcconfig override 警告                     | 第4步              |
+| `profiler.rb` (增强)                 | 子步骤计时分析                                      | 调试               |
+
+### v0.1.x 完整优化列表
+
+| 补丁                                 | 优化目标                                                   | 步骤  |
+| ---------------------------------- | ------------------------------------------------------ |:---:|
+| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller                                 | 3   |
+| `project_patch.rb`                 | pod_group O(n) → O(1) 哈希缓存                             | 3   |
+| `project_writer_patch.rb`          | SHA256 摘要比对 + 并行 cleanup/schemes/save                  | 3   |
+| `installer_patch.rb`               | 强制增量模式 + 跳过无变更生成 + 并行 integrate + 并行 configure_schemes | 3   |
+| `cache_analyzer_patch.rb`          | 并行 cache key MD5 计算                                    | 3   |
+| `analyzer_patch.rb`                | 依赖解析结果缓存                                               | 1   |
+| `user_integrator_patch.rb`         | 多 target 并行集成 + 并行保存 + 并行 xcconfig 警告                  | 4   |
 
 ---
 
@@ -59,15 +78,17 @@ pod install
 POD_GENERATE_DEBUG=1 pod install
 ```
 
-输出示例：
+输出示例（v0.1.2 新增子步骤计时）：
 
 ```
 [cocoapods-podgenerate] Performance Report:
-    Resolve dependencies              0.33s (3.9%)
-    Download dependencies             0.01s (0.1%)
-    Generate Pods project             3.79s (44.6%)
-    Integrate user project            0.02s (0.2%)
-  Total install!                      4.36s (51.2%)
+    Resolve dependencies              0.35s (2.5%)
+    Download dependencies             0.01s (0.0%)
+      Create and save projects        4.34s (30.8%)
+    Generate Pods project             4.38s (31.1%)
+    Integrate user project            0.02s (0.1%)
+    Write lockfiles                   0.04s (0.3%)
+  Total install!                      4.96s (35.2%)
 ```
 
 ---
@@ -84,16 +105,18 @@ PodGenerate/
 │       ├── command.rb                   # pod podgenerate CLI 命令
 │       ├── hooks.rb                     # :pre_install hook
 │       ├── patches/
-│       │   ├── installer_patch.rb       # Pod 目标安装优化
+│       │   ├── installer_patch.rb       # 强制增量 + 跳过 + 并行集成 + 并行 schemes
+│       │   ├── multi_project_generator_patch.rb  # 并行 PodTargetInstaller (v0.1.2)
 │       │   ├── project_patch.rb         # pod_group 哈希缓存
-│       │   ├── project_writer_patch.rb  # 增量项目保存
+│       │   ├── project_writer_patch.rb  # 增量写入 + 并行 cleanup/schemes/save
 │       │   ├── analyzer_patch.rb        # 依赖解析缓存
-│       │   └── user_integrator_patch.rb # 多 target 并行集成
+│       │   ├── cache_analyzer_patch.rb  # 并行 cache key 计算 (v0.1.2)
+│       │   └── user_integrator_patch.rb # 多 target 并行集成 + 并行 xcconfig 警告
 │       ├── parallel/
 │       │   ├── thread_pool.rb           # 线程池封装
 │       │   └── batch_processor.rb       # 批处理工具
 │       └── benchmark/
-│           └── profiler.rb              # 性能分析器
+│           └── profiler.rb              # 性能分析器（含子步骤计时）
 └── spec/                                # 测试（待补充）
 ```
 

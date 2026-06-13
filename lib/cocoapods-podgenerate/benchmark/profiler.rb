@@ -2,7 +2,7 @@
 
 # [cocoapods-podgenerate]
 # Performance profiler. Hooks into Pod::Installer to time each phase.
-# Output: per-phase wall-clock timing breakdown.
+# Output: per-phase wall-clock timing breakdown with sub-step detail.
 
 module Pod
   module PodGenerate
@@ -23,14 +23,11 @@ module Pod
           def install
             return unless enabled?
             Pod::Installer.prepend(ProfilerHooks)
+            Pod::Installer.prepend(ProfilerSubSteps)
           end
 
           def record_phase(name, duration)
             @phase_timings << [name, duration]
-          end
-
-          def swap_or_default(phase_name)
-            # Called from hooks: returns a timing helper or nil
           end
 
           def report
@@ -43,9 +40,11 @@ module Pod
             end
             Pod::UI.puts "  #{'─' * 50}"
             Pod::UI.puts "  #{format('%-35s', 'TOTAL')} #{format('%.2f', total)}s"
+            @phase_timings.clear
           end
         end
 
+        # Top-level step hooks (v0.1.0)
         module ProfilerHooks
           def install!
             t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -86,6 +85,50 @@ module Pod
           ensure
             elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
             Profiler.record_phase('  Integrate user project', elapsed)
+          end
+        end
+
+        # Sub-step timing hooks (v0.1.2)
+        module ProfilerSubSteps
+          def stage_sandbox(sandbox, pod_targets)
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            super
+          ensure
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            Profiler.record_phase('    Stage sandbox', elapsed) if elapsed > 0.01
+          end
+
+          def analyze_project_cache
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            result = super
+          ensure
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            Profiler.record_phase('    Analyze project cache', elapsed) if elapsed > 0.01
+            result
+          end
+
+          def create_and_save_projects(*args)
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            super
+          ensure
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            Profiler.record_phase('    Create and save projects', elapsed) if elapsed > 0.01
+          end
+
+          def update_project_cache(cache_analysis_result, target_installation_results)
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            super
+          ensure
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            Profiler.record_phase('    Update project cache', elapsed) if elapsed > 0.01
+          end
+
+          def write_lockfiles
+            t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            super
+          ensure
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+            Profiler.record_phase('  Write lockfiles', elapsed)
           end
         end
       end

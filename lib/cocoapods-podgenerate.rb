@@ -5,6 +5,8 @@ require 'cocoapods-podgenerate/patches/project_patch'
 require 'cocoapods-podgenerate/patches/project_writer_patch'
 require 'cocoapods-podgenerate/patches/analyzer_patch'
 require 'cocoapods-podgenerate/patches/user_integrator_patch'
+require 'cocoapods-podgenerate/patches/multi_project_generator_patch'
+require 'cocoapods-podgenerate/patches/cache_analyzer_patch'
 require 'cocoapods-podgenerate/parallel/thread_pool'
 require 'cocoapods-podgenerate/parallel/batch_processor'
 require 'cocoapods-podgenerate/benchmark/profiler'
@@ -18,6 +20,8 @@ module Pod
       Pod::PodGenerate::Patches::ProjectWriterPatch.apply
       Pod::PodGenerate::Patches::AnalyzerPatch.apply
       Pod::PodGenerate::Patches::UserIntegratorPatch.apply
+      Pod::PodGenerate::Patches::MultiProjectGeneratorPatch.apply
+      Pod::PodGenerate::Patches::CacheAnalyzerPatch.apply
 
       # Install hook for profiler
       Pod::PodGenerate::Benchmark::Profiler.install
@@ -28,8 +32,6 @@ module Pod
 end
 
 # Auto-activate when loaded via `plugin` directive in Podfile
-# The :pre_install hook is set up by hooks.rb, but we also support
-# direct `plugin` activation which defers to when CocoaPods is loaded.
 if defined?(Pod::HooksManager)
   Pod::PodGenerate.activate
 else

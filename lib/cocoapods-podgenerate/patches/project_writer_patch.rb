@@ -7,14 +7,21 @@
 #  1. SHA256 digest — skip sort+save for unchanged projects
 #  2. Parallel save — multiple xcodeproj files saved in threads
 #
+# v0.1.2 Optimizations:
+#  3. Parallel cleanup_projects — empty group removal across projects
+#  4. Parallel recreate_user_schemes — scheme file creation across projects
+#
 # Reference: CocoaPods — lib/cocoapods/installer/xcode/pods_project_generator/pods_project_writer.rb
+
+require 'concurrent'
+require 'etc'
 
 module Pod
   module PodGenerate
     module Patches
       module ProjectWriterPatch
         def self.apply
-          Pod::UI.message '[cocoapods-podgenerate] Applying ProjectWriterPatch v2 (incremental + parallel save)'
+          Pod::UI.message '[cocoapods-podgenerate] Applying ProjectWriterPatch v3 (incremental + parallel save + parallel write steps)'
           Pod::Installer::Xcode::PodsProjectWriter.prepend(IncrementalAndParallelSave)
         end
 
@@ -27,7 +34,20 @@ module Pod
             compute_initial_digests
           end
 
-          # ── Optimization: SHA256 skip + parallel save ──
+          # ── Optimizations 3+4+2: Parallel write! with parallel cleanup + schemes + save ──
+          def write!
+            # Parallel cleanup (each project is independent)
+            parallel_cleanup_projects(@projects)
+
+            # Parallel recreate_user_schemes (each project is independent)
+            parallel_recreate_user_schemes(@projects)
+
+            yield if block_given?
+
+            save_projects(@projects)
+          end
+
+          # ── Optimization 1: SHA256 skip + parallel save ──
           def save_projects(projects)
             # Filter: skip projects whose pbxproj is unchanged
             to_save = projects.select do |project|
@@ -67,6 +87,87 @@ module Pod
           end
 
           private
+
+          # ── Optimization 3: Parallel cleanup_projects ──
+
+          def parallel_cleanup_projects(projects)
+            pool_size = compute_pool_size
+            Pod::UI.message "- Cleaning up #{projects.size} projects (pool: #{pool_size})"
+
+            pool = Concurrent::FixedThreadPool.new(pool_size)
+            projects.each do |project|
+              pool.post do
+                cleanup_single_project(project)
+              rescue StandardError => e
+                Pod::UI.warn "[cocoapods-podgenerate] Cleanup error: #{e.message}"
+              end
+            end
+            pool.shutdown
+            pool.wait_for_termination
+          rescue NameError
+            cleanup_projects(projects)
+          end
+
+          def cleanup_single_project(project)
+            [project.pods, project.support_files_group,
+             project.development_pods, project.dependencies_group].each do |group|
+              group.remove_from_project if group.respond_to?(:empty?) && group.empty?
+            end
+          end
+
+          # ── Optimization 4: Parallel recreate_user_schemes ──
+
+          def parallel_recreate_user_schemes(projects)
+            library_product_types = [:framework, :dynamic_library, :static_library]
+
+            # Pre-build results_by_native_target once (shared read-only cache)
+            results_by_native_target = build_native_target_cache
+
+            pool_size = compute_pool_size
+            Pod::UI.message "- Recreating user schemes for #{projects.size} projects (pool: #{pool_size})"
+
+            pool = Concurrent::FixedThreadPool.new(pool_size)
+            projects.each do |project|
+              pool.post do
+                project.recreate_user_schemes(false) do |scheme, target|
+                  next unless target.respond_to?(:symbol_type)
+                  next unless library_product_types.include?(target.symbol_type)
+                  installation_result = results_by_native_target[target]
+                  next unless installation_result
+                  installation_result.test_native_targets.each do |test_native_target|
+                    scheme.add_test_target(test_native_target)
+                  end
+                end
+              rescue StandardError => e
+                Pod::UI.warn "[cocoapods-podgenerate] Scheme recreation error: #{e.message}"
+              end
+            end
+            pool.shutdown
+            pool.wait_for_termination
+          rescue NameError
+            # Fallback: sequential
+            projects.each do |project|
+              project.recreate_user_schemes(false) do |scheme, target|
+                next unless target.respond_to?(:symbol_type)
+                next unless library_product_types.include?(target.symbol_type)
+                installation_result = results_by_native_target[target]
+                next unless installation_result
+                installation_result.test_native_targets.each do |test_native_target|
+                  scheme.add_test_target(test_native_target)
+                end
+              end
+            end
+          end
+
+          def build_native_target_cache
+            cache = {}
+            @pod_target_installation_results.each do |_, result|
+              cache[result.native_target] = result if result.respond_to?(:native_target)
+            end
+            cache
+          end
+
+          # ── Digest helpers (from v0.1.1) ──
 
           def compute_initial_digests
             @projects.each do |project|
@@ -114,6 +215,12 @@ module Pod
             Digest::SHA256.file(path).hexdigest
           rescue StandardError
             nil
+          end
+
+          def compute_pool_size
+            [[Etc.nprocessors - 1, 2].max, 16].min
+          rescue NameError
+            4
           end
         end
       end
