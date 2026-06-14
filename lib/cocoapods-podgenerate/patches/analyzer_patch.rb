@@ -265,14 +265,14 @@ module Pod
                 end
               end
 
-            # 组装缓存数据
-            data = {
-              'cache_key' => cache_key,
-              'timestamp' => Time.now.to_s,
-              'cocoaPods_version' => Pod::VERSION,
-              'pod_count' => targets_data.values.flatten.size,
-              'targets' => targets_data,
-            }
+              # 组装缓存数据
+              data = {
+                'cache_key' => cache_key,
+                'timestamp' => Time.now.to_s,
+                'cocoaPods_version' => Pod::VERSION,
+                'pod_count' => targets_data.values.flatten.size,
+                'targets' => targets_data,
+              }
 
               # 原子写入：先写临时文件，成功后再 rename
               tmp_path = "#{path}.tmp"

@@ -64,6 +64,8 @@ module Pod
               threads = groups.map do |project, integrators|
                 Thread.new do
                   integrators.each(&:integrate!)
+                rescue StandardError => e
+                  Pod::UI.warn "[cocoapods-podgenerate] Integrate error for #{project.path}: #{e.message}"
                 end
               end
               threads.each(&:join)

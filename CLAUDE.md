@@ -9,10 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cd PodGenerate && gem build cocoapods-podgenerate.gemspec
 
 # Install built gem locally
-gem install cocoapods-podgenerate-0.1.6.gem
+gem install cocoapods-podgenerate-0.1.7.gem
 
 # Publish to RubyGems
-gem push cocoapods-podgenerate-0.1.6.gem
+gem push cocoapods-podgenerate-0.1.7.gem
 
 # Run performance comparison test (A/B/C)
 cd example && bash compare.sh
@@ -96,7 +96,7 @@ PodGenerate/
 │   ├── enhance_pods.rb / generate_podfile.rb   # Test pod generation
 │   ├── multi_target_test.rb                    # 6-target test
 │   └── ExampleA/ ExampleB/ ExampleC/           # Test projects
-├── cocoapods-podgenerate.gemspec               # v0.1.6
+├── cocoapods-podgenerate.gemspec               # v0.1.7
 └── README.md                                   # Full docs + benchmarks
 ```
 

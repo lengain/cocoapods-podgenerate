@@ -61,7 +61,8 @@
 | v0.1.3 | Bug fixes from audit |
 | v0.1.4 | Comprehensive bug fix（包含 CocoaPods 1.16.2 `ResolverSpecification` 兼容修复） |
 | v0.1.5 | （内部版本） |
-| **v0.1.6** | **正式发布 CocoaPods 1.16.2 兼容修复**；增加 A/B/C 三方对比测试框架 |
+| v0.1.6 | 正式发布 CocoaPods 1.16.2 兼容修复；增加 A/B/C 三方对比测试框架 |
+| **v0.1.7** | **修复 3 个并发 bug：`pool.post` rescue 绑定错误 + 线程异常裸传播 + `analyzer_patch` 缩进** |
 
 ---
 

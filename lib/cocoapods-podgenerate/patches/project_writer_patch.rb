@@ -141,9 +141,11 @@ module Pod
 
             if pool
               projects.each do |project|
-                pool.post { cleanup_single_project(project) }
-              rescue StandardError => e
-                Pod::UI.warn "[cocoapods-podgenerate] Cleanup error: #{e.message}"
+                pool.post do
+                  cleanup_single_project(project)
+                rescue StandardError => e
+                  Pod::UI.warn "[cocoapods-podgenerate] Cleanup error: #{e.message}"
+                end
               end
               pool.shutdown
               pool.wait_for_termination(Pod::PodGenerate::Parallel::ThreadPool::DEFAULT_TIMEOUT) || pool.kill
@@ -186,9 +188,9 @@ module Pod
               projects.each do |project|
                 pool.post do
                   recreate_schemes_for_project(project, library_product_types, results_by_native_target)
+                rescue StandardError => e
+                  Pod::UI.warn "[cocoapods-podgenerate] Scheme recreation error: #{e.message}"
                 end
-              rescue StandardError => e
-                Pod::UI.warn "[cocoapods-podgenerate] Scheme recreation error: #{e.message}"
               end
               pool.shutdown
               pool.wait_for_termination(Pod::PodGenerate::Parallel::ThreadPool::DEFAULT_TIMEOUT) || pool.kill
