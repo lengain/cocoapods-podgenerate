@@ -12,7 +12,7 @@
 #  测试流程:
 #    1. 卸载系统 cocoapods-podgenerate gem
 #    2. 清理所有 Pods，运行 ExampleB（纯净无插件）
-#    3. 重装 cocoapods-podgenerate gem（从本地源码构建 0.1.5）
+#    3. 重装 cocoapods-podgenerate gem（从本地源码构建 0.1.7）
 #    4. 清理后运行 ExampleA（本地路径插件）和 ExampleC（生产 gem）
 #    5. 增量阶段：不清除，重新运行 A/B/C
 #    6. 输出对比表格
@@ -81,14 +81,14 @@ uninstall_podgen_gem() {
 }
 
 install_podgen_gem() {
-  local gemfile="$PODGEN_DIR/cocoapods-podgenerate-0.1.5.gem"
+  local gemfile="$PODGEN_DIR/cocoapods-podgenerate-0.1.7.gem"
   if [ ! -f "$gemfile" ]; then
-    echo "  构建 cocoapods-podgenerate 0.1.5 gem..."
+    echo "  构建 cocoapods-podgenerate 0.1.7 gem..."
     cd "$PODGEN_DIR"
     gem build cocoapods-podgenerate.gemspec -o "$(basename "$gemfile")" 2>/dev/null
     cd "$BASE_DIR"
   fi
-  echo "  安装 cocoapods-podgenerate 0.1.5 gem..."
+  echo "  安装 cocoapods-podgenerate 0.1.7 gem..."
   gem install "$gemfile" 2>/dev/null | tail -1
   echo "     OK"
 }

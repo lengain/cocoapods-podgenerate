@@ -1,7 +1,7 @@
 PATH
   remote: ../..
   specs:
-    cocoapods-podgenerate (0.1.6)
+    cocoapods-podgenerate (0.1.7)
       cocoapods (>= 1.10.0)
       concurrent-ruby (~> 1.1)
 
@@ -129,7 +129,7 @@ CHECKSUMS
   cocoapods-deintegrate (1.0.5) sha256=517c2a448ef563afe99b6e7668704c27f5de9e02715a88ee9de6974dc1b3f6a2
   cocoapods-downloader (2.1) sha256=bb6ebe1b3966dc4055de54f7a28b773485ac724fdf575d9bee2212d235e7b6d1
   cocoapods-plugins (1.0.0) sha256=725d17ce90b52f862e73476623fd91441b4430b742d8a071000831efb440ca9a
-  cocoapods-podgenerate (0.1.6)
+  cocoapods-podgenerate (0.1.7)
   cocoapods-search (1.0.1) sha256=1b133b0e6719ed439bd840e84a1828cca46425ab73a11eff5e096c3b2df05589
   cocoapods-trunk (1.6.0) sha256=5f5bda8c172afead48fa2d43a718cf534b1313c367ba1194cebdeb9bfee9ed31
   cocoapods-try (1.2.0) sha256=145b946c6e7747ed0301d975165157951153d27469e6b2763c83e25c84b9defe
