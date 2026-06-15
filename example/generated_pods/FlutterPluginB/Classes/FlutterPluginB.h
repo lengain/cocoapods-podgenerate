@@ -1,0 +1,1 @@
+@interface FlutterPluginB : NSObject @end

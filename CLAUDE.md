@@ -100,6 +100,12 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.10 (2025-06-15)
+
+- **REFACTOR**: Unified Flutter test runner (`example/run_flutter_test.rb`) — merge Mode A (inline `depends_on_flutter`) and Mode B (`load podhelper.rb`) into a single test runner with `--a`/`--b`/`--all` flags.
+- **IMPROVE**: Add debug logging to `resolve_cross_project_dependencies` guard clauses for better diagnostics.
+- **FIX**: `flutter_post_install` in test podhelper.rb now outputs completion message for verification.
+
 ## v0.1.9 (2025-06-15)
 
 - **FIX (F1v2)**: Expand `resolve_cross_project_dependencies` to cover ALL projects in `@generated_projects`, not just the main Pods project. Flutter's latest podhelper.rb iterates BOTH `pods_project.targets` AND `generated_projects...targets` in its post-install hook. Without this fix, sub-project targets with cross-project `PBXTargetDependency` references still crash with `undefined method 'dependencies' for nil`.

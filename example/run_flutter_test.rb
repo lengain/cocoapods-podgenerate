@@ -2,17 +2,16 @@
 # frozen_string_literal: true
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Flutter Pod Simulation Test
+#  Unified Flutter Test Runner
 #
-#  模拟 Flutter 集成场景：
-#    - 创建 "Flutter" pod（引擎），多个 pod 通过 s.dependency 依赖它
-#    - 添加 Flutter podhelper.rb 风格的 depends_on_flutter 递归函数
-#    - 测试 PodGenerate 在 generate_multiple_pod_projects 下的兼容性
+#  合并两种 Flutter 集成模式的测试：
+#    Mode A: 简单模式 — 直接添加 Flutter pod + 内联 depends_on_flutter
+#    Mode B: 官方 load podhelper.rb 模式 — 加载 .ios/Flutter/podhelper.rb
 #
-#  关键验证：
-#    - 跨项目 PBXTargetDependency 引用（dependency.target）不为 nil（F1 修复）
-#    - 递归 depends_on_flutter 遍历不崩溃
-#    - generated_projects 遍历不崩溃（F2 修复）
+#  运行方式:
+#    ruby run_flutter_test.rb          # 运行 Mode A
+#    ruby run_flutter_test.rb --load   # 运行 Mode B（load 模式）
+#    ruby run_flutter_test.rb --all    # 运行所有模式
 # ═══════════════════════════════════════════════════════════════════════
 
 require 'fileutils'
@@ -20,207 +19,136 @@ require 'fileutils'
 BASE_DIR = File.expand_path(File.dirname(__FILE__))
 A_DIR = File.join(BASE_DIR, 'ExampleA')
 PODS_DIR = File.join(BASE_DIR, 'generated_pods')
+FLUTTER_APP_DIR = File.join(BASE_DIR, 'flutter_app')
+FLUTTER_IOS_DIR = File.join(FLUTTER_APP_DIR, '.ios', 'Flutter')
+RESULT_DIR = '/tmp'
 
-# ── 工具: 写入文件 ──────────────────────────────────────────────
-def write(filename, content)
-  File.write(filename, content)
-end
-
-def mkdir(path)
-  FileUtils.mkdir_p(path)
+def write(path, content)
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, content)
 end
 
 # ══════════════════════════════════════════════════════════════════
-#  1. 基于原始 generate_podfile.rb 重新生成所有 pod
+#  公共步骤：重新生成 pod + 创建 Flutter 引擎/插件
 # ══════════════════════════════════════════════════════════════════
 
-def regenerate_pods!
-  puts "━━━ [1/5] 重新生成所有 pod（基于原始 generate_podfile.rb）..."
-
-  # 清理之前测试的残留
-  (1..150).each do |i|
-    pod_dir = File.join(PODS_DIR, "PodGen_#{i}")
-    next unless File.exist?(pod_dir)
-    # 删除增强相关目录
-    %w[Tests VendoredFrameworks VendoredLibraries ExtraAssets UI].each do |dir|
-      FileUtils.rm_rf(File.join(pod_dir, dir))
-    end
-    # 删除 modulemap 文件
-    FileUtils.rm_f(File.join(pod_dir, "PodGen_#{i}.modulemap"))
-  end
-
-  # 重新生成 podspec（使用原始生成脚本）
+def step_regenerate_pods!
   system("cd #{BASE_DIR} && ruby generate_podfile.rb > /dev/null 2>&1")
-  puts "  ✅ Pods regenerated (clean baseline)"
 end
 
-# ══════════════════════════════════════════════════════════════════
-#  2. 创建 Flutter pod
-# ══════════════════════════════════════════════════════════════════
-
-def create_flutter_pod!
-  puts "━━━ [2/5] 创建 Flutter pod..."
-
-  flutter_dir = File.join(PODS_DIR, 'Flutter')
-  mkdir(flutter_dir)
-  mkdir(File.join(flutter_dir, 'Classes'))
-  mkdir(File.join(flutter_dir, 'ios'))
-
-  # Flutter podspec — 模拟 Flutter 引擎
-  write(File.join(flutter_dir, 'Flutter.podspec'), <<-RUBY)
+def step_create_flutter_pods!
+  # Flutter 引擎
+  FileUtils.rm_rf(File.join(PODS_DIR, 'Flutter'))
+  FileUtils.mkdir_p(File.join(PODS_DIR, 'Flutter', 'Classes'))
+  write(File.join(PODS_DIR, 'Flutter', 'Flutter.podspec'), <<-RUBY)
 Pod::Spec.new do |s|
-  s.name             = 'Flutter'
-  s.version          = '1.0.0'
-  s.summary          = 'Flutter Engine Pod (simulated)'
-  s.homepage         = 'https://flutter.dev'
-  s.license          = { :type => 'MIT' }
-  s.author           = { 'Flutter' => 'flutter@example.com' }
-  s.source           = { :git => 'https://github.com/flutter/engine.git', :tag => s.version.to_s }
+  s.name = 'Flutter'; s.version = '1.0.0'; s.summary = 'Flutter Engine'
+  s.homepage = 'https://flutter.dev'; s.license = { :type => 'MIT' }
+  s.author = { 'Flutter' => 'flutter@example.com' }
+  s.source = { :git => 'https://github.com/flutter/engine.git', :tag => s.version.to_s }
   s.ios.deployment_target = '15.0'
-  s.platform         = :ios, '15.0'
-  s.source_files     = 'Classes/**/*.{h,m,swift}', 'ios/**/*.{h,m,mm}'
-  s.frameworks       = 'Foundation', 'UIKit'
-  s.requires_arc     = true
+  s.source_files = 'Classes/**/*.{h,m,swift}'
+  s.frameworks = 'Foundation', 'UIKit'; s.requires_arc = true
 end
 RUBY
+  write(File.join(PODS_DIR, 'Flutter', 'Classes', 'FlutterEngine.h'), '@interface FlutterEngine : NSObject @end')
+  write(File.join(PODS_DIR, 'Flutter', 'Classes', 'FlutterEngine.m'), '@implementation FlutterEngine @end')
 
-  # Flutter 引擎源文件
-  write(File.join(flutter_dir, 'Classes', 'FlutterEngine.h'), <<-OBJC)
-#import <UIKit/UIKit.h>
-@interface FlutterEngine : NSObject
-+ (instancetype)sharedEngine;
-- (void)run;
-@end
-OBJC
-
-  write(File.join(flutter_dir, 'Classes', 'FlutterEngine.m'), <<-OBJC)
-#import "FlutterEngine.h"
-@implementation FlutterEngine
-+ (instancetype)sharedEngine { static id s; s = [[self alloc] init]; return s; }
-- (void)run { }
-@end
-OBJC
-
-  # Flutter 插件注册表
-  write(File.join(flutter_dir, 'ios', 'FlutterPluginRegistrant.m'), <<-OBJC)
-#import <Foundation/Foundation.h>
-@interface FlutterPluginRegistrant : NSObject @end
-@implementation FlutterPluginRegistrant @end
-OBJC
-
-  puts "  ✅ Flutter pod created (with Classes/ + ios/ source files)"
+  # 插件
+  %w[FlutterPluginA FlutterPluginB].each do |plugin|
+    FileUtils.rm_rf(File.join(PODS_DIR, plugin))
+    FileUtils.mkdir_p(File.join(PODS_DIR, plugin, 'Classes'))
+    write(File.join(PODS_DIR, plugin, "#{plugin}.podspec"), <<-RUBY)
+Pod::Spec.new do |s|
+  s.name = '#{plugin}'; s.version = '1.0.0'; s.summary = '#{plugin}'
+  s.homepage = 'https://example.com'; s.license = { :type => 'MIT' }
+  s.author = { 'Example' => 'example@example.com' }
+  s.source = { :git => 'https://github.com/example/#{plugin}.git', :tag => s.version.to_s }
+  s.ios.deployment_target = '15.0'
+  s.source_files = 'Classes/**/*.{h,m,swift}'
+  s.dependency 'Flutter', '~> 1.0'
+  s.frameworks = 'Foundation', 'UIKit'; s.requires_arc = true
 end
-
-# ══════════════════════════════════════════════════════════════════
-#  3. 让 10 个 Mid 层 pod 依赖 Flutter（模拟 Flutter 插件依赖）
-# ══════════════════════════════════════════════════════════════════
-
-def add_flutter_deps!
-  puts "━━━ [3/5] 让 PodGen_36..45 依赖 Flutter（模拟 Flutter plugin 场景）..."
-
-  added = 0
-  (36..45).each do |idx|
-    podspec = File.join(PODS_DIR, "PodGen_#{idx}", "PodGen_#{idx}.podspec")
-    next unless File.exist?(podspec)
-
-    content = File.read(podspec)
-    next if content.include?("dependency 'Flutter'")
-
-    # 在最后一个 end 前插入 s.dependency 'Flutter'
-    if content =~ /^(\s*)end\s*$/
-      content.sub!(/^(\s*)end\s*$/, "\\1  s.dependency 'Flutter', '~> 1.0'\n\\1end")
-      File.write(podspec, content)
-      added += 1
-    end
+RUBY
+    write(File.join(PODS_DIR, plugin, 'Classes', "#{plugin}.h"), "@interface #{plugin} : NSObject @end")
+    write(File.join(PODS_DIR, plugin, 'Classes', "#{plugin}.m"), "@implementation #{plugin} @end")
   end
-  puts "  ✅ #{added} pods now depend on Flutter"
+
+  # FlutterPluginA 额外依赖 FlutterPluginB（传递依赖）
+  content = File.read(File.join(PODS_DIR, 'FlutterPluginA', 'FlutterPluginA.podspec'))
+  content.sub!(/^end\s*$/, "  s.dependency 'FlutterPluginB', '~> 1.0'\nend")
+  File.write(File.join(PODS_DIR, 'FlutterPluginA', 'FlutterPluginA.podspec'), content)
 end
 
-# ══════════════════════════════════════════════════════════════════
-#  4. 生成 Flutter 兼容 Podfile
-# ══════════════════════════════════════════════════════════════════
+def step_create_flutter_app_structure!
+  FileUtils.rm_rf(FLUTTER_APP_DIR)
+  write(File.join(FLUTTER_APP_DIR, 'flutter_export_environment.sh'), <<-SH)
+export "FLUTTER_ROOT=/usr/local/flutter"
+export "FLUTTER_APPLICATION_PATH=#{FLUTTER_APP_DIR}"
+export "COCOAPODS_PARALLEL_CODE_SIGN=true"
+export "FLUTTER_BUILD_DIR=build"
+export "FLUTTER_FRAMEWORK_DIR=${FLUTTER_ROOT}/bin/cache/artifacts/engine/ios"
+SH
+  write(File.join(FLUTTER_APP_DIR, '.flutter-plugins'), <<-PLUGINS)
+flutter_plugin_a=#{FLUTTER_APP_DIR}/flutter_plugin_a
+flutter_plugin_b=#{FLUTTER_APP_DIR}/flutter_plugin_b
+PLUGINS
 
-def generate_podfile!
-  puts "━━━ [4/5] 生成 Flutter 兼容 Podfile..."
+  write(File.join(FLUTTER_IOS_DIR, 'podhelper.rb'), <<-RUBY)
+# frozen_string_literal: true
+FLUTTER_ENGINE_POD_NAME = 'Flutter'
 
-  write(File.join(A_DIR, 'Podfile'), <<-RUBY)
-# PodGenerate plugin
-$LOAD_PATH.unshift(File.expand_path('../../lib', __dir__))
-require 'cocoapods-podgenerate'
-Pod::PodGenerate.activate
-
-source 'https://cdn.cocoapods.org/'
-
-workspace 'Example.xcworkspace'
-platform :ios, '15.0'
-use_frameworks!
-inhibit_all_warnings!
-
-# 所有 150 个 pod + Flutter
-(1..150).each do |i|
-  pod "PodGen_\#{i}", :path => "../generated_pods/PodGen_\#{i}"
-end
-pod 'Flutter', :path => '../generated_pods/Flutter'
-
-# ── Flutter podhelper.rb 精确复现 ──
 def depends_on_flutter(target, engine_pod_name)
   target.dependencies.any? do |dependency|
-    if dependency.name == engine_pod_name
-      return true
-    end
-    if depends_on_flutter(dependency.target, engine_pod_name)
-      return true
-    end
+    return true if dependency.name == engine_pod_name
+    return true if depends_on_flutter(dependency.target, engine_pod_name)
   end
-  return false
+  false
 end
 
 def flutter_additional_ios_build_settings(target)
-  return unless target.respond_to?(:platform_name)
-  return unless target.platform_name == :ios
+  return unless target.respond_to?(:platform_name) && target.platform_name == :ios
   target.build_configurations.each do |config|
-    if depends_on_flutter(target, 'Flutter')
-      config.build_settings['ENABLE_BITCODE'] = 'NO'
+    next unless depends_on_flutter(target, FLUTTER_ENGINE_POD_NAME)
+    config.build_settings['ENABLE_BITCODE'] = 'NO'
+    config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Flutter'
+  end
+end
+
+def install_all_flutter_pods(flutter_application_path = nil)
+  pod_path = flutter_application_path || File.dirname(__FILE__)
+  flutter_pod = File.expand_path(File.join(pod_path, 'Flutter', 'Flutter.podspec'))
+  pod 'Flutter', :podspec => flutter_pod if File.exist?(flutter_pod)
+  plugins_file = File.expand_path(File.join(pod_path, '..', '..', '..', '.flutter-plugins'))
+  if File.exist?(plugins_file)
+    File.readlines(plugins_file).each do |line|
+      next if line.strip.empty? || line.start_with?('#')
+      parts = line.strip.split('=')
+      next unless parts.length == 2
+      name = parts[0].strip; path = parts[1].strip
+      podspec_path = File.expand_path(File.join(path, 'ios', "\#{name}.podspec"))
+      pod name, :path => podspec_path if File.exist?(podspec_path)
     end
   end
 end
 
-post_install do |installer|
-  puts '[flutter-test] Running Flutter post_install hook...'
-
-  # Pattern 1: 标准 Flutter 方式 — 遍历 pods_project.targets
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
-  end
-
-  # Pattern 2: 遍历 generated_projects（测试 F2 修复）
+def flutter_post_install(installer, skip: false)
+  return if skip
+  installer.pods_project.targets.each { |t| flutter_additional_ios_build_settings(t) }
   if installer.respond_to?(:generated_projects)
-    installer.generated_projects.each do |project|
-      project.targets.each do |target|
-        flutter_additional_ios_build_settings(target)
-      end
+    installer.generated_projects.each do |proj|
+      proj.targets.each { |t| flutter_additional_ios_build_settings(t) }
     end
   end
-
-  puts '[flutter-test] ✅ Flutter post_install hook completed'
+  puts '[flutter-podhelper] ✅ flutter_post_install completed'
 end
 RUBY
-
-  puts "  ✅ Podfile generated with Flutter post_install hook"
 end
 
-# ══════════════════════════════════════════════════════════════════
-#  5. 运行 pod install
-# ══════════════════════════════════════════════════════════════════
-
 def run_install!
-  puts "━━━ [5/5] 运行 pod install（带 PodGenerate 插件）..."
-
   Dir.chdir(A_DIR) do
-    FileUtils.rm_rf('Pods')
-    FileUtils.rm_f('Podfile.lock')
-
-    output = `ruby -e '
+    FileUtils.rm_rf('Pods'); FileUtils.rm_f('Podfile.lock')
+    `ruby -e '
       $stdout.sync = true; $stderr.sync = true
       $LOAD_PATH.unshift(File.expand_path("../../lib", __dir__))
       require "cocoapods"
@@ -229,101 +157,195 @@ def run_install!
       config = Pod::Config.instance
       Pod::Installer.new(config.sandbox, config.podfile, config.lockfile).install!
     ' 2>&1`
-
-    File.write('/tmp/flutter_test_output.txt', output)
-    [$?.exitstatus, output]
   end
 end
 
 # ══════════════════════════════════════════════════════════════════
-#  6. 验证
+#  Mode A: 简单模式
 # ══════════════════════════════════════════════════════════════════
 
-def verify(exit_code, output)
+def run_mode_a
   puts ""
-  puts "━━━ 验证..."
-  all_pass = true
+  puts "─" * 50
+  puts "Mode A: 内联 depends_on_flutter（简单模式）"
+  puts "─" * 50
 
-  # 安装成功
-  if exit_code == 0
-    puts "  ✅ pod install 完成 (exit=0)"
-  else
-    puts "  ❌ pod install 失败 (exit=#{exit_code})"
-    output.split("\n").select { |l| l.include?('[!]') || l.include?('Error:') }.each { |l| puts "     #{l.strip}" }
-    return false
+  # 让一些 pod 依赖 Flutter
+  (36..45).each do |i|
+    spec = File.join(PODS_DIR, "PodGen_#{i}", "PodGen_#{i}.podspec")
+    next unless File.exist?(spec)
+    content = File.read(spec)
+    next if content.include?("dependency 'Flutter'")
+    content.sub!(/^(\s*)end\s*$/, "\\1  s.dependency 'Flutter', '~> 1.0'\n\\1end")
+    File.write(spec, content)
   end
 
-  # Flutter 被安装
-  if output.include?('Installing Flutter')
-    puts "  ✅ Flutter pod 已安装"
-  end
+  # Podfile
+  write(File.join(A_DIR, 'Podfile'), <<-RUBY)
+$LOAD_PATH.unshift(File.expand_path('../../lib', __dir__))
+require 'cocoapods-podgenerate'
+Pod::PodGenerate.activate
+source 'https://cdn.cocoapods.org/'
+workspace 'Example.xcworkspace'
+platform :ios, '15.0'
+use_frameworks!
+inhibit_all_warnings!
 
-  # depends_on_flutter 递归不崩溃
-  if output.include?("undefined method") && output.include?("dependencies")
-    puts "  ❌ depends_on_flutter 递归崩溃！(dependency.target 为 nil)"
-    all_pass = false
-  else
-    puts "  ✅ depends_on_flutter 递归遍历未崩溃（F1 修复有效）"
-  end
+(1..150).each { |i| pod "PodGen_\#{i}", :path => "../generated_pods/PodGen_\#{i}" }
+pod 'Flutter', :path => '../generated_pods/Flutter'
+pod 'FlutterPluginA', :path => '../generated_pods/FlutterPluginA'
+pod 'FlutterPluginB', :path => '../generated_pods/FlutterPluginB'
 
-  # generated_projects 遍历不崩溃
-  if output.include?("undefined method") && output.include?("generated_projects")
-    puts "  ❌ generated_projects 遍历崩溃"
-    all_pass = false
-  else
-    puts "  ✅ generated_projects 遍历未崩溃（F2 修复有效）"
+def depends_on_flutter(target, engine_pod_name)
+  target.dependencies.any? do |dependency|
+    return true if dependency.name == engine_pod_name
+    return true if depends_on_flutter(dependency.target, engine_pod_name)
   end
+  false
+end
 
-  # Flutter post_install hook 完成
-  if output.include?('[flutter-test] ✅')
-    puts "  ✅ Flutter post_install hook 执行成功"
-  else
-    puts "  ⚠️  Flutter post_install hook 未检测到完成标记"
+post_install do |installer|
+  puts '[flutter-mode-a] post_install start'
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |c|
+      next unless depends_on_flutter(t, 'Flutter')
+      c.build_settings['ENABLE_BITCODE'] = 'NO'
+    end
   end
-
-  # 多项目生成
-  sub_count = Dir[File.join(A_DIR, 'Pods', '*.xcodeproj')].size
-  if sub_count > 50
-    puts "  ✅ generate_multiple_pod_projects: #{sub_count} 个 xcodeproj"
-  else
-    puts "  ⚠️  子项目较少: #{sub_count}"
+  if installer.respond_to?(:generated_projects)
+    installer.generated_projects.each do |proj|
+      proj.targets.each do |t|
+        t.build_configurations.each do |c|
+          next unless depends_on_flutter(t, 'Flutter')
+          c.build_settings['ENABLE_BITCODE'] = 'NO'
+        end
+      end
+    end
   end
+  puts '[flutter-mode-a] ✅ post_install done'
+end
+RUBY
 
-  # 验证 PBXTargetDependency 跨项目引用
+  output = run_install!
+  File.write(File.join(RESULT_DIR, 'flutter_mode_a_output.txt'), output)
+  exit_code = $?.exitstatus
+
+  puts "  Exit: #{exit_code}"
+  if exit_code == 0 && output.include?('[flutter-mode-a] ✅')
+    puts "  ✅ Mode A passed"
+    return true
+  end
+  puts "  ❌ Mode A failed"
+  output.split("\n").select { |l| l.include?('[!]') }.each { |l| puts "     #{l}" }
+  false
+end
+
+# ══════════════════════════════════════════════════════════════════
+#  Mode B: load podhelper.rb 模式
+# ══════════════════════════════════════════════════════════════════
+
+def run_mode_b
+  puts ""
+  puts "─" * 50
+  puts "Mode B: load podhelper.rb（官方集成模式）"
+  puts "─" * 50
+
+  write(File.join(A_DIR, 'Podfile'), <<-RUBY)
+$LOAD_PATH.unshift(File.expand_path('../../lib', __dir__))
+require 'cocoapods-podgenerate'
+Pod::PodGenerate.activate
+source 'https://cdn.cocoapods.org/'
+workspace 'Example.xcworkspace'
+platform :ios, '15.0'
+use_frameworks!
+inhibit_all_warnings!
+
+flutter_application_path = File.expand_path('../flutter_app', __dir__)
+load File.join(flutter_application_path, '.ios', 'Flutter', 'podhelper.rb')
+
+(1..150).each { |i| pod "PodGen_\#{i}", :path => "../generated_pods/PodGen_\#{i}" }
+
+target 'Example' do
+  install_all_flutter_pods(flutter_application_path)
+end
+
+post_install do |installer|
+  flutter_post_install(installer) if defined?(flutter_post_install)
+end
+RUBY
+
+  output = run_install!
+  File.write(File.join(RESULT_DIR, 'flutter_mode_b_output.txt'), output)
+  exit_code = $?.exitstatus
+
+  puts "  Exit: #{exit_code}"
+  if exit_code == 0 && output.include?('[flutter-podhelper] ✅')
+    puts "  ✅ Mode B passed"
+    return true
+  end
+  puts "  ❌ Mode B failed"
+  output.split("\n").select { |l| l.include?('[!]') }.each { |l| puts "     #{l}" }
+  false
+end
+
+# ══════════════════════════════════════════════════════════════════
+#  验证跨项目依赖解析日志
+# ══════════════════════════════════════════════════════════════════
+
+def verify_resolution_log(output)
   if output.include?('[cocoapods-podgenerate] Resolved')
-    puts "  ✅ 跨项目依赖已解析"
-  end
-
-  if all_pass
-    puts ""
-    puts "  🎉 全部通过！PodGenerate 完全兼容 Flutter pod 依赖场景"
+    count = output[/Resolved (\d+)/, 1]
+    puts "  📊 跨项目依赖已解析: #{count} 个"
   else
-    puts ""
-    puts "  ❌ 存在失败项"
+    puts "  ⚠️  未检测到跨项目依赖解析消息（可能无跨项目依赖需要解析）"
   end
-  all_pass
 end
 
 # ══════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════
 
+mode = ARGV[0] || '--a'  # 默认 Mode A
+
 puts ""
 puts "╔══════════════════════════════════════════════════════════════╗"
-puts "║  Flutter Pod Simulation Test                                ║"
-puts "║  验证 PodGenerate 在 Flutter 场景下的兼容性                  ║"
+puts "║  Unified Flutter Test Runner                                ║"
+puts "║  Mode A: 内联 depends_on_flutter                             ║"
+puts "║  Mode B: load podhelper.rb                                   ║"
 puts "╚══════════════════════════════════════════════════════════════╝"
+
+all_pass = true
+
+# 步骤 1: 生成基线 pod
+puts ""; puts "━━━ [准备] 重新生成 pod + Flutter 引擎/插件..."
+step_regenerate_pods!
+step_create_flutter_pods!
+step_create_flutter_app_structure!
+puts "  ✅ 准备完成"
+
+# 运行选中的模式
+if %w[--all --both -a].include?(mode)
+  all_pass &= run_mode_a
+  all_pass &= run_mode_b
+elsif mode == '--b'
+  all_pass &= run_mode_b
+else
+  all_pass &= run_mode_a
+end
+
+puts ""
+puts "═" * 50
+if all_pass
+  puts "🎉 全部通过! (Exit 0)"
+else
+  puts "❌ 存在失败项"
+end
 puts ""
 
-regenerate_pods!
-create_flutter_pod!
-add_flutter_deps!
-generate_podfile!
-exit_code, output = run_install!
-success = verify(exit_code, output)
+# 打印跨项目解析日志
+outputs = []
+outputs << File.read(File.join(RESULT_DIR, 'flutter_mode_a_output.txt')) if File.exist?(File.join(RESULT_DIR, 'flutter_mode_a_output.txt'))
+outputs << File.read(File.join(RESULT_DIR, 'flutter_mode_b_output.txt')) if File.exist?(File.join(RESULT_DIR, 'flutter_mode_b_output.txt'))
+outputs.each { |o| verify_resolution_log(o) }
 
-puts ""
-puts "📝 完整输出: /tmp/flutter_test_output.txt"
-puts ""
-
-exit(success ? 0 : 1)
+exit(all_pass ? 0 : 1)

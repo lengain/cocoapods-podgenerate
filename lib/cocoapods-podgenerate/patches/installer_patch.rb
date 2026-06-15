@@ -214,6 +214,7 @@ module Pod
           # 不仅限于主项目（如 Flutter 新版 podhelper.rb 遍历所有子项目）。
           def resolve_cross_project_dependencies
             return unless @generated_projects && !@generated_projects.empty?
+            Pod::UI.message "[cocoapods-podgenerate] Resolving cross-project deps across #{@generated_projects.size} projects"
 
             # 构建全局 UUID → target 查找表（来自所有项目，包括主项目）
             all_targets = {}
@@ -223,7 +224,10 @@ module Pod
               end
             end
 
-            return if all_targets.empty?
+            if all_targets.empty?
+              Pod::UI.message '[cocoapods-podgenerate] No targets found in generated_projects — skipping cross-project resolution'
+              return
+            end
 
             resolved = 0
             # 遍历所有项目（主项目 + 子项目），解析它们的跨项目依赖
