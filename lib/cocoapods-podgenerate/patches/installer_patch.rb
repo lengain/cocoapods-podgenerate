@@ -97,9 +97,12 @@ module Pod
               # C2 修复: 初始化所有实例变量（避免下游代码获得 nil）
               @generated_aggregate_targets = aggregate_targets
               @generated_pod_targets = []
-              @pods_project = nil
+              # 修复: 创建空项目替代 nil，避免 post-install hooks 中
+              # installer.pods_project 返回 nil 导致 .targets 等调用崩溃
+              # （例如 Flutter podhelper.rb 访问 pods_project.targets）
+              @pods_project = Pod::Project.new(sandbox.project_path)
               @pod_target_subprojects = []
-              @generated_projects = []
+              @generated_projects = [@pods_project]
 
               # C2 修复: 确保 post-install hooks 被调用
               run_podfile_post_install_hooks
@@ -160,6 +163,16 @@ module Pod
               projects_writer = Pod::Installer::Xcode::PodsProjectWriter.new(sandbox, generated_projects,
                                                              target_installation_results.pod_target_installation_results,
                                                              installation_options)
+
+              # 解析跨项目依赖：当 generate_multiple_pod_projects 启用后，
+              # 主项目的 aggregate target 通过 PBXContainerItemProxy 引用子项目的 pod target。
+              # Xcodeproj 无法解析这些跨项目引用，PBXTargetDependency#target 返回 nil。
+              # 这会导致递归遍历依赖链的工具（如 Flutter podhelper.rb 的
+              # depends_on_flutter）在访问 nil.target 时崩溃。
+              # 解决方法：在 post-install hooks 运行前，将子项目 target 的引用
+              # 直接挂载到主项目的 PBXTargetDependency.target 上。
+              resolve_cross_project_dependencies
+
               projects_writer.write! do
                 run_podfile_post_install_hooks
               end
@@ -184,15 +197,65 @@ module Pod
 
           private
 
-          # 并行配置所有项目的 scheme 文件
+          # 解析跨项目 target 依赖关系
+          #
+          # generate_multiple_pod_projects 启用时，每个 pod target 位于独立的
+          # .xcodeproj 子项目中。主项目（Pods.xcodeproj）中的 aggregate target
+          # 通过 PBXTargetDependency + PBXContainerItemProxy 引用子项目中的目标。
+          # Xcodeproj 在读取主项目时不会自动加载子项目，因此
+          # PBXTargetDependency#target 对于跨项目引用返回 nil。
+          #
+          # 在 post-install hooks 执行前，将子项目中实际的 target 对象关联到
+          # 主项目的 PBXTargetDependency.target 上，使得依赖链遍历可以正常工作。
+          # 这对于 Flutter podhelper.rb 的 depends_on_flutter 递归函数尤为重要。
+          #
+          # v0.1.9 改进：同时解析子项目 target 的跨项目依赖
+          # 因为 post-install hooks 可能遍历所有 generated_projects 的 targets，
+          # 不仅限于主项目（如 Flutter 新版 podhelper.rb 遍历所有子项目）。
+          def resolve_cross_project_dependencies
+            return unless @generated_projects && !@generated_projects.empty?
+
+            # 构建全局 UUID → target 查找表（来自所有项目，包括主项目）
+            all_targets = {}
+            @generated_projects.each do |project|
+              project.targets.each do |target|
+                all_targets[target.uuid] = target
+              end
+            end
+
+            return if all_targets.empty?
+
+            resolved = 0
+            # 遍历所有项目（主项目 + 子项目），解析它们的跨项目依赖
+            @generated_projects.each do |project|
+              project.targets.each do |target|
+                target.dependencies.each do |dependency|
+                  # 已解析的（同一项目内）跳过
+                  next if dependency.target
+                  # 无 proxy 引用说明不是跨项目依赖，也跳过
+                  next unless dependency.target_proxy
+
+                  remote_uuid = dependency.target_proxy.remote_global_id_string
+                  next unless remote_uuid
+
+                  remote_target = all_targets[remote_uuid]
+                  next unless remote_target
+
+                  dependency.target = remote_target
+                  resolved += 1
+                end
+              end
+            end
+
+            return unless resolved > 0
+
+            Pod::UI.message "[cocoapods-podgenerate] Resolved #{resolved} cross-project target dependencies"
+          end
+
+          # ── 并行配置 scheme ──
           #
           # 每个 scheme 文件是独立的 .xcscheme，存储在不同 xcodeproj 的
           # xcuserdata 目录中。每个 project 完全独立 → 无锁并行。
-          #
-          # v0.1.4 修复 (L3): 使用 defined? 检查代替 rescue NameError
-          # rescue NameError 过于宽泛（捕获所有未定义常量/变量/方法错误），
-          # 可能吞掉与 Concurrent::FixedThreadPool 无关的错误。
-          # defined? 精确检查 Concurrent::FixedThreadPool 类定义是否存在。
           def parallel_configure_schemes(projects_by_pod_targets, generator, generation_result)
             pool_size = [[Etc.nprocessors - 1, 2].max, 16].min
             Pod::UI.message "- Configuring schemes across #{projects_by_pod_targets.size} projects (pool: #{pool_size})"

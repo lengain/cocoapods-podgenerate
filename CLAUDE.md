@@ -100,6 +100,16 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.9 (2025-06-15)
+
+- **FIX (F1v2)**: Expand `resolve_cross_project_dependencies` to cover ALL projects in `@generated_projects`, not just the main Pods project. Flutter's latest podhelper.rb iterates BOTH `pods_project.targets` AND `generated_projects...targets` in its post-install hook. Without this fix, sub-project targets with cross-project `PBXTargetDependency` references still crash with `undefined method 'dependencies' for nil`.
+- **NEW**: Flutter pod simulation test (`example/run_flutter_test.rb`) — creates a Flutter engine pod, makes 10 pods depend on it, adds the exact `depends_on_flutter` recursive function from Flutter's podhelper.rb, verifies cross-project dependency traversal works with `generate_multiple_pod_projects`.
+
+## v0.1.8 (2025-06-15)
+
+- **FIX (F1)**: Resolve cross-project PBXTargetDependency references before post-install hooks to fix Flutter podhelper.rb compatibility. When `generate_multiple_pod_projects` is enabled, each pod target is in its own `.xcodeproj`. The Flutter `depends_on_flutter` recursively traverses `dependency.target`, which returns nil for cross-project Xcodeproj references, causing `undefined method 'dependencies' for nil`. The fix builds a UUID lookup table from sub-project targets and wires them into the main project's `PBXTargetDependency.target` before post-install hooks run.
+- **FIX (F2)**: In the skip-no-changes path, replace `@pods_project = nil` with `Pod::Project.new(path)` so `installer.pods_project` returns a valid (empty) project object instead of nil, preventing crashes when post-install hooks iterate `pods_project.targets`.
+
 ## Versioning & Release
 
 1. Bump `spec.version` in `cocoapods-podgenerate.gemspec`

@@ -29,4 +29,5 @@
   s.dependency 'PodGen_24', '~> 1.0'
   s.dependency 'PodGen_25', '~> 1.0'
   s.dependency 'PodGen_26', '~> 1.0'
+    s.dependency 'Flutter', '~> 1.0'
   end
