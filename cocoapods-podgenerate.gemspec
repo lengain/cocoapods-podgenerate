@@ -8,6 +8,7 @@ Gem::Specification.new do |spec|
   spec.authors       = ['PodGenerate Team']
   spec.homepage      = 'https://github.com/lengain/cocoapods-podgenerate'
   spec.license       = 'MIT'
+  spec.required_ruby_version = '>= 3.0'
 
   spec.files         = Dir['lib/**/*.rb']
   spec.require_paths = ['lib']

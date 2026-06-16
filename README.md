@@ -63,6 +63,9 @@
 | v0.1.5 | （内部版本） |
 | v0.1.6 | 正式发布 CocoaPods 1.16.2 兼容修复；增加 A/B/C 三方对比测试框架 |
 | **v0.1.7** | **修复 3 个并发 bug：`pool.post` rescue 绑定错误 + 线程异常裸传播 + `analyzer_patch` 缩进** |
+| **v0.1.8** | **Flutter 兼容性：`resolve_cross_project_dependencies` + 跳过路径 `@pods_project=nil` 修复** |
+| **v0.1.9** | **Flutter 兼容性加强：跨项目依赖解析扩展到全部 `generated_projects`** |
+| **v0.1.10** | **代码审查改进：调试日志 + 统一 Flutter 测试脚本** |
 
 ---
 
@@ -141,6 +144,10 @@ PodGenerate/
     ├── enhance_pods.rb                 # 增强 pod 模板
     ├── generate_podfile.rb             # 生成 150 个测试 pod
     ├── multi_target_test.rb            # 多 target 场景测试
+    ├── complex_podfile_test.rb         # 复杂 Podfile 兼容性测试（abstract_target + inherit! + test_spec）
+    ├── run_complex_test.rb             # 复杂 Podfile 测试运行器
+    ├── run_flutter_test.rb             # Flutter 兼容性测试（内联 + load podhelper.rb 双模式）
+    ├── run_flutter_integration_test.rb # Flutter Add-to-App 集成测试
     ├── run_with_plugin.rb              # 手动加载插件运行（调试用）
     ├── Gemfile                         # ExampleA/C 的 Gemfile
     ├── ExampleA/                       # 本地路径插件工程
@@ -177,6 +184,16 @@ cd ExampleC && bundle exec pod install --verbose
 
 # 多 target 场景测试（6 个 target）
 ruby ../multi_target_test.rb
+
+# 复杂 Podfile 兼容性测试（abstract_target + inherit! + test_spec 等）
+ruby ../complex_podfile_test.rb
+
+# Flutter 兼容性测试（内联 depends_on_flutter / load podhelper.rb）
+ruby ../run_flutter_test.rb          # Mode A: 内联
+ruby ../run_flutter_test.rb --b     # Mode B: load podhelper.rb
+
+# Flutter Add-to-App 完整集成测试
+ruby ../run_flutter_integration_test.rb
 ```
 
 > **注意**：`compare.sh` 会自动管理系统 gem 的安装/卸载，确保 ExampleB 不被插件影响。运行过程中会临时卸载 cocoapods-podgenerate gem，运行完 B 后重新安装。
@@ -188,7 +205,14 @@ ruby ../multi_target_test.rb
 - **CocoaPods**: >= 1.10.0（v0.1.6+ 已验证 CocoaPods 1.16.2）
 - **Ruby**: >= 3.0
 - **Platform**: macOS（Xcode 项目集成）
+- **Flutter**: v0.1.8+ 完全兼容 Flutter Add-to-App `load podhelper.rb` 集成模式
 - 不影响 Xcode 编译产物，仅优化 `pod install` 过程
+
+### Flutter 集成注意
+
+本插件强制启用 `generate_multiple_pod_projects`，这会导致 Xcodeproj 无法解析跨项目的 `PBXTargetDependency` 引用（`dependency.target` 返回 `nil`）。Flutter 的 `depends_on_flutter` 递归遍历依赖链时会因此崩溃。
+
+**v0.1.8+** 新增 `resolve_cross_project_dependencies` 机制，在 post-install hooks 执行前将所有子项目的 target 引用挂载到 `PBXTargetDependency.target` 上，确保 `depends_on_flutter` 递归遍历不会遇到 `nil`。如果你在 Flutter 项目中使用此插件，请确保版本 >= v0.1.9。
 
 ## License
 
