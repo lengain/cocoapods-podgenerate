@@ -8,65 +8,17 @@
 
 ## 效果
 
-> 测试环境：150 pods · 26源文件+3资源/pod · ObjC+Swift混编 · 6 targets
->
-> v0.1.0–v0.1.2: Apple M3 Pro  
-> v0.1.6: Apple M3（对比脚本见 `example/compare.sh`，包含 A/B/C 三方对照）
-
-| 版本         | 场景       | 耗时        | 相比上个版本提升     | 相比无插件提升  |
-|:----------:| -------- |:---------:|:------------:|:--------:|
-| v0.1.0     | 干净安装     | 4.88s     | —            | —        |
-| v0.1.0     | 增量安装     | 4.22s     | —            | —        |
-| v0.1.1     | 干净安装     | 5.61s     | —            | —        |
-| v0.1.1     | 增量安装     | 1.52s     | **+64%**     | **+68%** |
-| v0.1.2     | 干净安装     | 5.18s     | **+7.7%** 🚀 | —        |
-| v0.1.2     | 增量安装     | 1.14s     | **+25%** 🚀  | **+75%** |
-| **v0.1.6** | **干净安装** | **7.47s** | — †           | **-2.3%** |
-| **v0.1.6** | **增量安装** | **1.67s** | — †           | **+76.8%** 🚀 |
-
-> † v0.1.6 测试环境为 Apple M3（与之前 M3 Pro 不同），干净安装的绝对耗时不可直接比较。但**增量安装相对无插件的加速比（+76.8%）** 是同一环境下的横向对比结果，可反映真实收益。
-
-### 增量安装对比明细（v0.1.6）
+> 测试环境：150 pods · 26源文件+3资源/pod · ObjC+Swift混编 · 6 targets · Apple M3
 
 | 方案 | 插件来源 | Podfile plugin | 首次安装 | 增量安装 | 相对无插件加速 |
 |:---:|:------:|:-------------:|:-------:|:-------:|:----------:|
 | A | 本地路径 | ✅ | 7.18s | 1.70s | **+76.4%** |
 | B | 无 | ❌ | 7.30s | 7.21s | 基准 |
-| C | 生产 gem 0.1.6 | ✅ | 7.47s | 1.67s | **+76.8%** 🚀 |
+| C | 生产 gem v0.1.6 | ✅ | 7.47s | 1.67s | **+76.8%** 🚀 |
+
+> 对比脚本见 `example/compare.sh`，包含 A/B/C 三方对照及增量/首轮双维度对比。
 
 ---
-
-## 功能
-
-### 补丁总览
-
-| 补丁                                 | 优化目标                                                   | 步骤  | 引入版本 |
-| ---------------------------------- | ------------------------------------------------------ |:---:|:------:|
-| `installer_patch.rb`               | 强制增量模式 + 跳过无变更生成 + 并行 integrate + 并行 configure_schemes | 3/4 | v0.1.1 |
-| `project_patch.rb`                 | pod_group O(n) → O(1) 哈希缓存                             | 3   | v0.1.1 |
-| `project_writer_patch.rb`          | SHA256 摘要比对 + 并行 cleanup/schemes/save                  | 3   | v0.1.1 |
-| `analyzer_patch.rb`                | 依赖解析结果缓存                                               | 1   | v0.1.1 |
-| `user_integrator_patch.rb`         | 多 target 并行集成 + 并行保存 + 并行 xcconfig 警告                  | 4   | v0.1.1 |
-| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller（150 pod 同时安装）                  | 3   | v0.1.2 |
-| `cache_analyzer_patch.rb`          | 并行 cache key MD5 计算                                     | 3   | v0.1.2 |
-| `profiler.rb`                      | 子步骤计时分析（调试）                                          | 调试  | v0.1.2 |
-
-### 版本历史
-
-| 版本 | 变更 |
-|:---:|:----|
-| v0.1.0 | 初始版本 |
-| v0.1.1 | 增量安装从 4.22s → 1.52s（+64%）；跳过无变更项目生成；并行集成 |
-| v0.1.2 | 并行化 PodTargetInstaller + cache key + schemes；子步骤计时分析 |
-| v0.1.3 | Bug fixes from audit |
-| v0.1.4 | Comprehensive bug fix（包含 CocoaPods 1.16.2 `ResolverSpecification` 兼容修复） |
-| v0.1.5 | （内部版本） |
-| v0.1.6 | 正式发布 CocoaPods 1.16.2 兼容修复；增加 A/B/C 三方对比测试框架 |
-| **v0.1.7** | **修复 3 个并发 bug：`pool.post` rescue 绑定错误 + 线程异常裸传播 + `analyzer_patch` 缩进** |
-| **v0.1.8** | **Flutter 兼容性：`resolve_cross_project_dependencies` + 跳过路径 `@pods_project=nil` 修复** |
-| **v0.1.9** | **Flutter 兼容性加强：跨项目依赖解析扩展到全部 `generated_projects`** |
-| **v0.1.10** | **代码审查改进：调试日志 + 统一 Flutter 测试脚本** |
-| **v0.1.11** | **nil 保护：`@pods_project` 为 nil 时创建空项目降级，防止 post-install hook 崩溃** |
 
 ---
 
@@ -214,6 +166,40 @@ ruby ../run_flutter_integration_test.rb
 本插件强制启用 `generate_multiple_pod_projects`，这会导致 Xcodeproj 无法解析跨项目的 `PBXTargetDependency` 引用（`dependency.target` 返回 `nil`）。Flutter 的 `depends_on_flutter` 递归遍历依赖链时会因此崩溃。
 
 **v0.1.8+** 新增 `resolve_cross_project_dependencies` 机制，在 post-install hooks 执行前将所有子项目的 target 引用挂载到 `PBXTargetDependency.target` 上，确保 `depends_on_flutter` 递归遍历不会遇到 `nil`。如果你在 Flutter 项目中使用此插件，请确保版本 >= v0.1.9。
+
+---
+
+## 功能
+
+### 补丁总览
+
+| 补丁                                 | 优化目标                                                   | 步骤  | 引入版本 |
+| ---------------------------------- | ------------------------------------------------------ |:---:|:------:|
+| `installer_patch.rb`               | 强制增量模式 + 跳过无变更生成 + 并行 integrate + 并行 configure_schemes | 3/4 | v0.1.1 |
+| `project_patch.rb`                 | pod_group O(n) → O(1) 哈希缓存                             | 3   | v0.1.1 |
+| `project_writer_patch.rb`          | SHA256 摘要比对 + 并行 cleanup/schemes/save                  | 3   | v0.1.1 |
+| `analyzer_patch.rb`                | 依赖解析结果缓存                                               | 1   | v0.1.1 |
+| `user_integrator_patch.rb`         | 多 target 并行集成 + 并行保存 + 并行 xcconfig 警告                  | 4   | v0.1.1 |
+| `multi_project_generator_patch.rb` | 并行化 PodTargetInstaller（150 pod 同时安装）                  | 3   | v0.1.2 |
+| `cache_analyzer_patch.rb`          | 并行 cache key MD5 计算                                     | 3   | v0.1.2 |
+| `profiler.rb`                      | 子步骤计时分析（调试）                                          | 调试  | v0.1.2 |
+
+### 版本历史
+
+| 版本 | 变更 |
+|:---:|:----|
+| v0.1.0 | 初始版本 |
+| v0.1.1 | 增量安装从 4.22s → 1.52s（+64%）；跳过无变更项目生成；并行集成 |
+| v0.1.2 | 并行化 PodTargetInstaller + cache key + schemes；子步骤计时分析 |
+| v0.1.3 | Bug fixes from audit |
+| v0.1.4 | Comprehensive bug fix（包含 CocoaPods 1.16.2 `ResolverSpecification` 兼容修复） |
+| v0.1.5 | （内部版本） |
+| v0.1.6 | 正式发布 CocoaPods 1.16.2 兼容修复；增加 A/B/C 三方对比测试框架 |
+| **v0.1.7** | **修复 3 个并发 bug：`pool.post` rescue 绑定错误 + 线程异常裸传播 + `analyzer_patch` 缩进** |
+| **v0.1.8** | **Flutter 兼容性：`resolve_cross_project_dependencies` + 跳过路径 `@pods_project=nil` 修复** |
+| **v0.1.9** | **Flutter 兼容性加强：跨项目依赖解析扩展到全部 `generated_projects`** |
+| **v0.1.10** | **代码审查改进：调试日志 + 统一 Flutter 测试脚本** |
+| **v0.1.11** | **nil 保护：`@pods_project` 为 nil 时创建空项目降级，防止 post-install hook 崩溃** |
 
 ## License
 
