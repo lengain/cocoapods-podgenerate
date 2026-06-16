@@ -66,6 +66,7 @@
 | **v0.1.8** | **Flutter 兼容性：`resolve_cross_project_dependencies` + 跳过路径 `@pods_project=nil` 修复** |
 | **v0.1.9** | **Flutter 兼容性加强：跨项目依赖解析扩展到全部 `generated_projects`** |
 | **v0.1.10** | **代码审查改进：调试日志 + 统一 Flutter 测试脚本** |
+| **v0.1.11** | **nil 保护：`@pods_project` 为 nil 时创建空项目降级，防止 post-install hook 崩溃** |
 
 ---
 

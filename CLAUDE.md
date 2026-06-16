@@ -100,6 +100,10 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.11 (2025-06-15)
+
+- **FIX**: Add nil guard for `@pods_project` in `create_and_save_projects`. When `pod_project_generation_result.project` returns nil (certain CocoaPods configurations/versions), `installer.pods_project.targets` in post-install hooks crashes with `undefined method 'targets' for nil`. Now creates an empty `Pod::Project.new(sandbox.project_path)` as fallback.
+
 ## v0.1.10 (2025-06-15)
 
 - **REFACTOR**: Unified Flutter test runner (`example/run_flutter_test.rb`) — merge Mode A (inline `depends_on_flutter`) and Mode B (`load podhelper.rb`) into a single test runner with `--a`/`--b`/`--all` flags.

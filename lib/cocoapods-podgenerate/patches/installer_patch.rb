@@ -151,6 +151,13 @@ module Pod
               pod_project_generation_result = generator.generate!
               @target_installation_results = pod_project_generation_result.target_installation_results
               @pods_project = pod_project_generation_result.project
+              # 安全保护：某些 CocoaPods 配置/版本下 project 可能为 nil
+              # 创建空项目降级，避免 post-install hook 中 nil.targets 崩溃
+              # 参考：v0.1.11 — undefined method 'targets' for nil
+              unless @pods_project
+                Pod::UI.message '[cocoapods-podgenerate] pods_project is nil — creating empty fallback'
+                @pods_project = Pod::Project.new(sandbox.project_path)
+              end
               @pod_target_subprojects = pod_project_generation_result.projects_by_pod_targets.keys
               @generated_projects = ([pods_project] + pod_target_subprojects).compact
               @generated_pod_targets = pod_targets_to_generate
