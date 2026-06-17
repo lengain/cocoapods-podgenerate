@@ -110,6 +110,13 @@ module Pod
               # 清理沙盒中残留的文件
               Pod::Installer::SandboxDirCleaner.new(sandbox, pod_targets, aggregate_targets).clean!
 
+              # 跳过路径修复: touch Pods project.pbxproj 让 Xcode 感知到变化
+              # 否则 Xcode 的 Dynamic Project Reloading 不会触发
+              pods_pbxproj = File.join(sandbox.project_path.to_s, 'project.pbxproj')
+              if File.file?(pods_pbxproj)
+                FileUtils.touch(pods_pbxproj)
+              end
+
               # H1 修复: 当没有目标需要生成时，跳过 update_project_cache 调用
               # @target_installation_results 仅在 create_and_save_projects 内设置，
               # 在跳过路径上始终为 nil，回退到空 InstallationResults.new({}, {})

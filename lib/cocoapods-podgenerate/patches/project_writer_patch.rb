@@ -75,26 +75,38 @@ module Pod
           # 增量 + 并行保存项目
           #
           # 流程:
-          #   1. 过滤: 跳过 pbxproj 内容未变的项目（SHA256 摘要比对）
-          #   2. 排序: 对需要保存的项目调用 sort(:groups_position => :below)
-          #   3. 保存: 多项目并行写入（每个 xcodeproj 独立目录）
+          #   1. SHA256 摘要比对，分出变更和未变更项目
+          #   2. 未变更项目：touch pbxproj 更新时间戳（触发 Xcode 动态刷新）
+          #   3. 变更项目：排序后并行保存
           #
           # 【Bug 修复 L1】
-          # 只有当 old_digest 和 current_digest 都非 nil 且相等时才跳过。
+          # 只有当 old_digest 和 current_digest 都非 nil 且相等时才跳过保存。
           # 如果任一为 nil（例如文件不可读），一律重新保存以确保项目完整性。
+          #
+          # 【Xcode 动态刷新】
+          # v0.1.12 修复：未变更的项目也需要 touch pbxproj 文件，
+          # 否则 Xcode 不会触发 Dynamic Project Reloading（项目树不刷新）。
           #
           # @param projects [Array<Project>] 要保存的项目列表
           def save_projects(projects)
-            to_save = projects.select do |project|
+            to_save = []
+            unchanged = []
+            projects.each do |project|
               old = @project_digests[project.object_id]
               cur = digest_pbxproj(project)
               if old && cur && old == cur
-                Pod::UI.message "- Skipping unchanged project #{UI.path project.path}"
-                false
+                unchanged << project
               else
-                true
+                to_save << project
               end
             end
+
+            # 先 touch 未变更项目（轻量操作，触发 Xcode 动态刷新）
+            unless unchanged.empty?
+              Pod::UI.message "- Touching #{unchanged.size} unchanged projects for Xcode refresh"
+              unchanged.each { |p| touch_pbxproj(p) }
+            end
+
             return if to_save.empty?
 
             # 排序（串行 — sort 操作轻量，并行开销反而更大）
@@ -258,6 +270,24 @@ module Pod
             pbx_path = path.to_s.end_with?('.xcodeproj') ? File.join(path.to_s, 'project.pbxproj') : path.to_s
             return nil unless File.file?(pbx_path)
             Digest::SHA256.file(pbx_path).hexdigest
+          rescue StandardError
+            nil
+          end
+
+          # touch 项目的 pbxproj 文件，更新修改时间戳
+          #
+          # Xcode 的 Dynamic Project Reloading 通过检测 xcodeproj 内
+          # project.pbxproj 的修改时间来触发。当 SHA256 摘要未变化时
+          # 跳过 save 会导致 Xcode 无法感知变化，项目树不刷新。
+          # 本方法即使内容不变也更新文件修改时间。
+          #
+          # @param project [Project] Xcodeproj 项目
+          def touch_pbxproj(project)
+            path = project.path
+            return unless path
+            pbx_path = path.to_s.end_with?('.xcodeproj') ? File.join(path.to_s, 'project.pbxproj') : path.to_s
+            return unless File.file?(pbx_path)
+            FileUtils.touch(pbx_path)
           rescue StandardError
             nil
           end

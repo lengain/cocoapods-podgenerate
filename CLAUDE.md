@@ -100,6 +100,10 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.12 (2025-06-17)
+
+- **FIX (Xcode Dynamic Reloading)**: `project_writer_patch.rb` now touches pbxproj even for SHA256-unchanged projects, and `installer_patch.rb` skip path touches Pods pbxproj. Previously, skipping save on unchanged content meant Xcode never saw modtime changes on Pods project files, preventing Dynamic Project Reloading (project tree not refreshing in Xcode after `pod install`).
+
 ## v0.1.11 (2025-06-15)
 
 - **FIX**: Add nil guard for `@pods_project` in `create_and_save_projects`. When `pod_project_generation_result.project` returns nil (certain CocoaPods configurations/versions), `installer.pods_project.targets` in post-install hooks crashes with `undefined method 'targets' for nil`. Now creates an empty `Pod::Project.new(sandbox.project_path)` as fallback.

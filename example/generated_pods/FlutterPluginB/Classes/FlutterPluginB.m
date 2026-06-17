@@ -1,1 +1,0 @@
-@implementation FlutterPluginB @end
