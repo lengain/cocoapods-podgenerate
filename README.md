@@ -155,17 +155,18 @@ ruby ../run_flutter_integration_test.rb
 
 ## 兼容性
 
-- **CocoaPods**: >= 1.10.0（v0.1.6+ 已验证 CocoaPods 1.16.2）
+- **CocoaPods**: >= 1.10.0（已验证 1.16.2）
 - **Ruby**: >= 3.0
 - **Platform**: macOS（Xcode 项目集成）
-- **Flutter**: v0.1.8+ 完全兼容 Flutter Add-to-App `load podhelper.rb` 集成模式
+- **Flutter**: ≥ v0.1.9 完全兼容 Flutter Add-to-App `load podhelper.rb` 集成模式
+- **Xcode 动态刷新**: ≥ v0.1.12 每次 `pod install` 都会更新 Pods 项目文件修改时间，触发 Xcode Dynamic Project Reloading（项目树自动刷新）
 - 不影响 Xcode 编译产物，仅优化 `pod install` 过程
 
 ### Flutter 集成注意
 
 本插件强制启用 `generate_multiple_pod_projects`，这会导致 Xcodeproj 无法解析跨项目的 `PBXTargetDependency` 引用（`dependency.target` 返回 `nil`）。Flutter 的 `depends_on_flutter` 递归遍历依赖链时会因此崩溃。
 
-**v0.1.8+** 新增 `resolve_cross_project_dependencies` 机制，在 post-install hooks 执行前将所有子项目的 target 引用挂载到 `PBXTargetDependency.target` 上，确保 `depends_on_flutter` 递归遍历不会遇到 `nil`。如果你在 Flutter 项目中使用此插件，请确保版本 >= v0.1.9。
+**v0.1.9+** 在 post-install hooks 执行前自动解析全部项目的跨项目依赖引用，确保 `depends_on_flutter` 递归遍历不会遇到 `nil`。如果你在 Flutter 项目中使用此插件，请使用 ≥ v0.1.11 版本（含 nil 保护）。
 
 ---
 
