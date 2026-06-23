@@ -91,6 +91,23 @@ module Pod
             ptg = cache_analysis_result.pod_targets_to_generate
             atg = cache_analysis_result.aggregate_targets_to_generate
 
+            # ── 本地开发 pod 文件级变更检测 ──
+            # CocoaPods 的 TargetCacheKey 使用 spec attributes_hash（如
+            # source_files 的 glob 模式字符串）做哈希，不检查 glob 展开后的
+            # 实际文件列表。当本地开发 pod（:path）中源文件有增删时，
+            # glob 模式不变 → cache key 不变 → ptg 为空 → "No changes" 跳过。
+            # 解决方法：为每个开发 pod 计算当前源文件列表的 SHA256，
+            # 与上次运行的清单比较，有差异时强制加入 ptg。
+            if ptg.empty? && (atg.nil? || atg.empty?)
+              unless sandbox.development_pods.empty?
+                dev_changed = detect_dev_pod_file_changes
+                unless dev_changed.empty?
+                  Pod::UI.puts "[cocoapods-podgenerate] Dev pod files changed: #{dev_changed.map(&:pod_name).join(', ')} — forcing regeneration"
+                  ptg = dev_changed
+                end
+              end
+            end
+
             if ptg.empty? && (atg.nil? || atg.empty?)
               Pod::UI.puts "[cocoapods-podgenerate] No changes — skipping project generation"
 
@@ -300,6 +317,92 @@ module Pod
               Pod::UI.warn '[cocoapods-podgenerate] Scheme configuration timed out'
               pool.kill
             end
+          end
+
+          # ── 本地开发 pod 文件级变更检测 ──
+          #
+          # CocoaPods 的 TargetCacheKey 使用 pod_target.root_spec.attributes_hash
+          # 作为缓存键的一部分。attributes_hash 中包含 source_files 等 glob 模式
+          # 字符串（如 "lib/**/*.rb"），而不是实际展开后的文件列表。
+          # 当本地开发 pod 的源文件在文件系统层面发生增删时，glob 模式不变，
+          # 缓存键也就不会变化，导致 "No changes — skipping project generation"
+          # 漏掉文件级变更。
+          #
+          # 解决方法：为每个开发 pod 维护一个 SHA256 清单文件，记录其 source_files
+          # glob 展开后的实际文件列表的哈希值。每次 pod install 时重新计算并比较。
+          # 清单存储在 Pods/.cocoapods-podgenerate-devpod-manifest.yaml 中。
+          DEV_POD_FILE_MANIFEST = '.cocoapods-podgenerate-devpod-manifest.yaml'
+
+          # 检测开发 pod 中源文件是否有增删
+          # 返回需要重新生成的 PodTarget 数组
+          def detect_dev_pod_file_changes
+            dev_pods = sandbox.development_pods
+            return [] if dev_pods.empty?
+
+            manifest_path = File.join(sandbox.root.to_s, DEV_POD_FILE_MANIFEST)
+
+            # 读取上次记录的 hash 值
+            previous = {}
+            if File.exist?(manifest_path)
+              begin
+                data = YAML.safe_load(File.read(manifest_path))
+                previous = data if data.is_a?(Hash)
+              rescue => e
+                Pod::UI.warn "[cocoapods-podgenerate] Failed to read dev pod manifest: #{e.message}"
+              end
+            end
+
+            current = {}
+            changed = []
+
+            pod_targets.each do |pt|
+              name = pt.pod_name
+              next unless dev_pods.key?(name)
+
+              current[name] = compute_dev_pod_file_digest(pt)
+              if previous[name] != current[name]
+                changed << pt
+              end
+            end
+
+            # 持久化当前清单
+            begin
+              File.write(manifest_path, YAML.dump(current))
+            rescue => e
+              Pod::UI.warn "[cocoapods-podgenerate] Failed to write dev pod manifest: #{e.message}"
+            end
+
+            changed
+          end
+
+          # 计算开发 pod 当前源文件列表的 SHA256
+          # 使用 podspec 中的 source_files/headers glob 模式，
+          # 在文件系统层面展开后对相对路径排序做哈希。
+          # @return [String] 十六进制 SHA256（空文件列表则是空字符串哈希）
+          def compute_dev_pod_file_digest(pod_target)
+            pod_name = pod_target.pod_name
+            pod_dir = sandbox.pod_dir(pod_name)
+            return '' unless pod_dir && File.directory?(pod_dir)
+
+            pod_dir_str = pod_dir.to_s
+            files = []
+
+            pod_target.spec_consumers.each do |consumer|
+              patterns = []
+              patterns.concat(Array(consumer.source_files))
+              patterns.concat(Array(consumer.public_header_files))
+              patterns.concat(Array(consumer.private_header_files))
+
+              patterns.each do |pattern|
+                full_pattern = File.join(pod_dir_str, pattern)
+                Dir.glob(full_pattern).each do |f|
+                  next unless File.file?(f)
+                  files << f.sub("#{pod_dir_str}/", '')
+                end
+              end
+            end
+
+            Digest::SHA256.hexdigest(files.uniq.sort.join("\n"))
           end
         end
 

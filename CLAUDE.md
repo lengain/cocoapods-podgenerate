@@ -100,6 +100,10 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.13 (2025-06-23)
+
+- **FIX (Dev pod file change detection)**: `installer_patch.rb` — CocoaPods' TargetCacheKey only hashes podspec `attributes_hash` (glob pattern strings like `Classes/**/*.{h,m,swift}`), NOT the actual expanded file list. When source files are added/deleted from a development pod (`:path`), the cache key remains unchanged, causing "No changes — skipping project generation" to miss file-level changes. Fix: store SHA256 manifest of actual source files matching `source_files`/headers globs, compare at each `pod install`, force regeneration when mismatch detected.
+
 ## v0.1.12 (2025-06-17)
 
 - **FIX (Xcode Dynamic Reloading)**: `project_writer_patch.rb` now touches pbxproj even for SHA256-unchanged projects, and `installer_patch.rb` skip path touches Pods pbxproj. Previously, skipping save on unchanged content meant Xcode never saw modtime changes on Pods project files, preventing Dynamic Project Reloading (project tree not refreshing in Xcode after `pod install`).
