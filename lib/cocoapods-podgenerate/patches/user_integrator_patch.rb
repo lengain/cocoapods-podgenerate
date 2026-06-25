@@ -15,7 +15,6 @@
 #   - lib/cocoapods/installer/user_project_integrator.rb
 
 require 'concurrent'
-require 'etc'
 
 module Pod
   module PodGenerate
@@ -83,7 +82,8 @@ module Pod
             projects = projects.uniq
 
             if projects.size <= 1
-              projects.each do |project|
+              project = projects.first
+              if project
                 if project.dirty?
                   project.save
                 else
@@ -133,7 +133,7 @@ module Pod
               return
             end
 
-            pool_size = compute_pool_size
+            pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
             Pod::UI.message "- Checking xcconfig overrides for #{targets.size} targets (pool: #{pool_size})"
             pool = Concurrent::FixedThreadPool.new(pool_size)
             targets.each do |aggregate_target|
@@ -187,11 +187,6 @@ module Pod
             end
           end
 
-          def compute_pool_size
-            [[Etc.nprocessors - 1, 2].max, 16].min
-          rescue NameError
-            4
-          end
         end
       end
     end

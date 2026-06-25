@@ -25,7 +25,6 @@
 #   - lib/cocoapods/installer/xcode/pods_project_generator.rb
 
 require 'concurrent'
-require 'etc'
 
 module Pod
   module PodGenerate
@@ -53,7 +52,7 @@ module Pod
           #   pod target 名称到安装结果的映射
           def install_all_pod_targets(projects_by_pod_targets)
             UI.message '- Installing Pod Targets (parallel)' do
-              pool_size = compute_pool_size
+              pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
               mutex = Mutex.new
               all_results = {}
               errors = [] # v0.1.4: 收集错误而不是静默吞掉
@@ -90,14 +89,6 @@ module Pod
 
           private
 
-          # 计算适合当前机器的线程池大小
-          # 使用 CPU 核心数 - 1（为主线程留一个），最小 2，最大 16
-          # @return [Integer]
-          def compute_pool_size
-            [[Etc.nprocessors - 1, 2].max, 16].min
-          rescue NameError
-            4 # Etc 不可用时的安全回退
-          end
         end
       end
     end

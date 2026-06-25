@@ -100,6 +100,16 @@ PodGenerate/
 └── README.md                                   # Full docs + benchmarks
 ```
 
+## v0.1.14 (2026-06-25)
+
+- **REFACTOR**: Centralized `compute_pool_size` — removed 5 duplicate implementations from individual patches, unified into `ThreadPool.compute_pool_size` via `alias`.
+- **CLEANUP**: Removed unused `BatchProcessor` module (dead code).
+- **FIX (Dev pod detection)**: Always check dev pod file changes regardless of whether other pods also changed (previously only checked when `ptg` and `atg` were both empty). Merge dev pod changes with, rather than replacing, existing changes.
+- **FIX (nil project save)**: Added nil guard for `project` in `UserIntegratorPatch#save_projects` single-project path.
+- **SAFE**: Restored `@pods_project` nil fallback (empty project) in `create_and_save_projects` with warning, instead of raising fatal error. Protects against known edge cases in certain CocoaPods versions.
+- **CLEANUP**: Removed dead `require 'etc'` from 5 patch files (`Etc` is only required in `thread_pool.rb` now).
+- **CLEANUP**: Fixed indentation inconsistency in `cache_analyzer_patch.rb`, `multi_project_generator_patch.rb`, `project_writer_patch.rb`.
+
 ## v0.1.13 (2025-06-23)
 
 - **FIX (Dev pod file change detection)**: `installer_patch.rb` — CocoaPods' TargetCacheKey only hashes podspec `attributes_hash` (glob pattern strings like `Classes/**/*.{h,m,swift}`), NOT the actual expanded file list. When source files are added/deleted from a development pod (`:path`), the cache key remains unchanged, causing "No changes — skipping project generation" to miss file-level changes. Fix: store SHA256 manifest of actual source files matching `source_files`/headers globs, compare at each `pod install`, force regeneration when mismatch detected.

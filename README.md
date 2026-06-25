@@ -202,6 +202,7 @@ ruby ../run_flutter_integration_test.rb
 | **v0.1.10** | **代码审查改进：调试日志 + 统一 Flutter 测试脚本** |
 | **v0.1.11** | **nil 保护：`@pods_project` 为 nil 时创建空项目降级，防止 post-install hook 崩溃** |
 | **v0.1.12** | **Xcode 动态刷新修复：touch pbxproj 更新时间戳，确保增量安装后 Xcode 项目树刷新** |
+| **v0.1.14** | **重构：集中化 `compute_pool_size` 到 ThreadPool，移除 5 处重复实现 + 清理死代码 `BatchProcessor` + 修复 dev pod 变更检测合并逻辑 + `@pods_project` nil 降级保留 + 清理 `require 'etc'`** |
 | **v0.1.13** | **本地开发 pod 文件级变更检测：SHA256 清单比对，解决 CocoaPods cache key 不感知 glob 展开后文件增删的问题** |
 
 ## License

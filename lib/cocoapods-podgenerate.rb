@@ -23,7 +23,6 @@ require 'cocoapods-podgenerate/patches/user_integrator_patch'
 require 'cocoapods-podgenerate/patches/multi_project_generator_patch'
 require 'cocoapods-podgenerate/patches/cache_analyzer_patch'
 require 'cocoapods-podgenerate/parallel/thread_pool'
-require 'cocoapods-podgenerate/parallel/batch_processor'
 require 'cocoapods-podgenerate/benchmark/profiler'
 
 module Pod

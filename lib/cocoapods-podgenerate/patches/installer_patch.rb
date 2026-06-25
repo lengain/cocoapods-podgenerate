@@ -38,7 +38,6 @@
 #   - lib/cocoapods/installer/xcode/pods_project_generator.rb
 
 require 'concurrent'
-require 'etc'
 
 module Pod
   module PodGenerate
@@ -88,8 +87,8 @@ module Pod
             stage_sandbox(sandbox, pod_targets)
 
             cache_analysis_result = analyze_project_cache
-            ptg = cache_analysis_result.pod_targets_to_generate
-            atg = cache_analysis_result.aggregate_targets_to_generate
+            ptg = cache_analysis_result.pod_targets_to_generate || []
+            atg = cache_analysis_result.aggregate_targets_to_generate || []
 
             # ── 本地开发 pod 文件级变更检测 ──
             # CocoaPods 的 TargetCacheKey 使用 spec attributes_hash（如
@@ -98,17 +97,15 @@ module Pod
             # glob 模式不变 → cache key 不变 → ptg 为空 → "No changes" 跳过。
             # 解决方法：为每个开发 pod 计算当前源文件列表的 SHA256，
             # 与上次运行的清单比较，有差异时强制加入 ptg。
-            if ptg.empty? && (atg.nil? || atg.empty?)
-              unless sandbox.development_pods.empty?
-                dev_changed = detect_dev_pod_file_changes
-                unless dev_changed.empty?
-                  Pod::UI.puts "[cocoapods-podgenerate] Dev pod files changed: #{dev_changed.map(&:pod_name).join(', ')} — forcing regeneration"
-                  ptg = dev_changed
-                end
+            unless sandbox.development_pods.empty?
+              dev_changed = detect_dev_pod_file_changes
+              unless dev_changed.empty?
+                Pod::UI.puts "[cocoapods-podgenerate] Dev pod files changed: #{dev_changed.map(&:pod_name).join(', ')} — forcing regeneration"
+                ptg = (ptg + dev_changed).uniq
               end
             end
 
-            if ptg.empty? && (atg.nil? || atg.empty?)
+            if ptg.empty? && atg.empty?
               Pod::UI.puts "[cocoapods-podgenerate] No changes — skipping project generation"
 
               # C2 修复: 初始化所有实例变量（避免下游代码获得 nil）
@@ -179,7 +176,7 @@ module Pod
               # 创建空项目降级，避免 post-install hook 中 nil.targets 崩溃
               # 参考：v0.1.11 — undefined method 'targets' for nil
               unless @pods_project
-                Pod::UI.message '[cocoapods-podgenerate] pods_project is nil — creating empty fallback'
+                Pod::UI.warn "[cocoapods-podgenerate] pods_project is nil from PodsProjectGenerator — creating empty fallback. This may indicate a CocoaPods internal error or an incompatible version."
                 @pods_project = Pod::Project.new(sandbox.project_path)
               end
               @pod_target_subprojects = pod_project_generation_result.projects_by_pod_targets.keys
@@ -292,7 +289,7 @@ module Pod
           # 每个 scheme 文件是独立的 .xcscheme，存储在不同 xcodeproj 的
           # xcuserdata 目录中。每个 project 完全独立 → 无锁并行。
           def parallel_configure_schemes(projects_by_pod_targets, generator, generation_result)
-            pool_size = [[Etc.nprocessors - 1, 2].max, 16].min
+            pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
             Pod::UI.message "- Configuring schemes across #{projects_by_pod_targets.size} projects (pool: #{pool_size})"
 
             # L3 修复: defined? 精确检查类可用性，替代 rescue NameError
@@ -441,7 +438,7 @@ module Pod
             end
 
             # 多 target: 使用线程池并行集成（M3 修复）
-            pool_size = [[Etc.nprocessors - 1, 2].max, 16].min
+            pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
             pool = Concurrent::FixedThreadPool.new(pool_size)
 
             pods_to_integrate.each do |result|

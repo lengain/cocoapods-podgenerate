@@ -13,14 +13,16 @@ module Pod
         DEFAULT_TIMEOUT = 120
 
         class << self
-          # 计算适合当前机器的线程池大小
-          # 使用 nproc - 1（为主线程留一个核心），最小 2，最大 16
-          # @return [Integer] 推荐的线程池大小
-          def pool_size
-            [[Etc.nprocessors - 1, 2].max, 16].min
-          rescue NameError
-            4
-          end
+         # 计算适合当前机器的线程池大小
+         # 使用 nproc - 1（为主线程留一个核心），最小 2，最大 16
+          # 同时提供 pool_size 和 compute_pool_size 两个名称，供各 patch 文件统一使用。
+         # @return [Integer] 推荐的线程池大小
+         def pool_size
+           [[Etc.nprocessors - 1, 2].max, 16].min
+         rescue NameError
+           4
+         end
+          alias compute_pool_size pool_size
         end
       end
     end

@@ -32,7 +32,6 @@
 #   - lib/cocoapods/installer/project_cache/project_cache_analyzer.rb
 
 require 'concurrent'
-require 'etc'
 
 module Pod
   module PodGenerate
@@ -59,7 +58,7 @@ module Pod
           #   target 标签到缓存键的映射
           def create_cache_key_mappings(target_by_label)
             UI.message '- Creating cache key mappings (parallel)' do
-              pool_size = compute_pool_size
+              pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
               pool = Concurrent::FixedThreadPool.new(pool_size)
               mutex = Mutex.new
               results = {}
@@ -115,12 +114,6 @@ module Pod
             end
           end
 
-          # 计算线程池大小
-          def compute_pool_size
-            [[Etc.nprocessors - 1, 2].max, 16].min
-          rescue NameError
-            4
-          end
         end
       end
     end

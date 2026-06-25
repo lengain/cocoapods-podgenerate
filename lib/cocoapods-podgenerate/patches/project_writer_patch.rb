@@ -33,7 +33,6 @@
 
 require 'digest'
 require 'concurrent'
-require 'etc'
 
 module Pod
   module PodGenerate
@@ -142,7 +141,7 @@ module Pod
           # 每个 project 独立，使用 Concurrent::FixedThreadPool 并行执行。
           # 如果 concurrent-ruby 不可用（NameError），回退到串行处理。
           def parallel_cleanup_projects(projects)
-            pool_size = compute_pool_size
+            pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
             Pod::UI.message "- Cleaning up #{projects.size} projects (pool: #{pool_size})"
 
             pool = begin
@@ -187,7 +186,7 @@ module Pod
             # 预构建 native target → InstallationResult 的查找缓存（只读、线程安全）
             results_by_native_target = build_native_target_cache
 
-            pool_size = compute_pool_size
+            pool_size = Pod::PodGenerate::Parallel::ThreadPool.compute_pool_size
             Pod::UI.message "- Recreating user schemes for #{projects.size} projects (pool: #{pool_size})"
 
             pool = begin
@@ -292,12 +291,6 @@ module Pod
             nil
           end
 
-          # 计算线程池大小
-          def compute_pool_size
-            [[Etc.nprocessors - 1, 2].max, 16].min
-          rescue NameError
-            4
-          end
         end
       end
     end
